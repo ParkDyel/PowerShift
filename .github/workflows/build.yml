@@ -1,0 +1,45 @@
+name: Windows build and installer checks
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - name: Build application
+        shell: pwsh
+        run: ./Build.ps1
+      - name: Check rules, settings, and log retention
+        shell: powershell
+        run: ./Test.ps1
+      - name: Prepare official Inno Setup compiler
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $package = Join-Path $env:RUNNER_TEMP 'innosetup-7.1.1-x64.exe'
+          Invoke-WebRequest 'https://github.com/jrsoftware/issrc/releases/download/is-7_1_1/innosetup-7.1.1-x64.exe' -OutFile $package
+          $signature = Get-AuthenticodeSignature -LiteralPath $package
+          if ($signature.Status -ne 'Valid' -or $signature.SignerCertificate.Subject -notmatch 'Pyrsys B.V.') { throw 'Official compiler signature invalid.' }
+          $compilerRoot = Join-Path $env:RUNNER_TEMP 'InnoSetup'
+          $extract = Start-Process -FilePath $package -ArgumentList @('/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/PORTABLE=1','/CURRENTUSER','/NOICONS',('/DIR="' + $compilerRoot + '"')) -WindowStyle Hidden -Wait -PassThru
+          if ($extract.ExitCode -ne 0) { throw 'Compiler extraction failed.' }
+          "POWERSHIFT_ISCC=$compilerRoot\ISCC.exe" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+      - name: Build installer
+        shell: pwsh
+        run: ./Build-Installer.ps1 -IsccPath $env:POWERSHIFT_ISCC -UseExistingBinary
+      - name: Check installation, running-app upgrade, and uninstall
+        shell: powershell
+        run: ./tests/InstallerTest.ps1 -InstallerPath ./dist/PowerShift-Setup-0.4.0.exe -InstallDirectory "$env:RUNNER_TEMP\PowerShift-Installer-Test"
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: PowerShift-Setup-0.4.0
+          path: dist/PowerShift-Setup-0.4.0.exe
+          if-no-files-found: error
