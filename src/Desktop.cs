@@ -51,8 +51,8 @@ namespace PowerShift
         public static readonly Guid Performance = new Guid("8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c");
         public static Icon CreateIcon(Guid id)
         {
-            Color color = id == Saver ? Color.FromArgb(42, 174, 117) :
-                id == Performance ? Color.FromArgb(247, 155, 48) : Color.FromArgb(63, 143, 235);
+            Color color = id == Saver ? Color.FromArgb(234, 179, 8) :
+                id == Performance ? Color.FromArgb(63, 143, 235) : Color.FromArgb(42, 174, 117);
             using (Bitmap bitmap = new Bitmap(32, 32))
             using (Graphics g = Graphics.FromImage(bitmap))
             {
