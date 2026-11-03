@@ -27,7 +27,8 @@ namespace PowerShift
 
     internal sealed class RuleForm : Form
     {
-        private readonly ComboBox process = new ComboBox();
+        private readonly TextBox process = new TextBox();
+        private readonly TextBox executablePath = new TextBox();
         private readonly ComboBox plan = new ComboBox();
         private readonly CheckBox enabled = new CheckBox();
         public ProcessRule Result;
@@ -36,50 +37,57 @@ namespace PowerShift
             Text = existing == null ? "프로그램 규칙 추가" : "프로그램 규칙 편집";
             Font = new Font("Malgun Gothic", 9F);
             AutoScaleMode = AutoScaleMode.Dpi;
-            ClientSize = new Size(490, 350);
+            ClientSize = new Size(640, 440);
             FormBorderStyle = FormBorderStyle.FixedDialog;
             MaximizeBox = false; MinimizeBox = false;
             StartPosition = FormStartPosition.CenterParent;
             TableLayoutPanel layout = new TableLayoutPanel { Dock = DockStyle.Fill,
-                Padding = new Padding(20), ColumnCount = 2, RowCount = 7 };
+                Padding = new Padding(20), ColumnCount = 2, RowCount = 9 };
             layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
             layout.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
             Controls.Add(layout);
             layout.Controls.Add(new Label { Text = "프로세스 이름", AutoSize = true }, 0, 0);
             process.Dock = DockStyle.Fill;
-            process.AutoCompleteMode = AutoCompleteMode.SuggestAppend;
-            process.AutoCompleteSource = AutoCompleteSource.ListItems;
-            SortedSet<string> names = new SortedSet<string>(StringComparer.OrdinalIgnoreCase);
-            foreach (Process p in Process.GetProcesses())
-            {
-                using (p) { try { names.Add(p.ProcessName + ".exe"); } catch (InvalidOperationException) { } }
-            }
-            foreach (string name in names) process.Items.Add(name);
-            process.Text = existing == null ? "" : existing.ProcessName + ".exe";
+            process.Text = existing == null ? "" : RuleEngine.Normalize(existing.ProcessName) + ".exe";
+            executablePath.Text = existing == null ? "" : existing.ExecutablePath;
             layout.Controls.Add(process, 0, 1);
             Button browse = new Button { Text = "찾아보기…", AutoSize = true };
             browse.Click += delegate
             {
                 using (OpenFileDialog dialog = new OpenFileDialog { Filter = "실행 파일 (*.exe)|*.exe", CheckFileExists = true })
-                    if (dialog.ShowDialog(this) == DialogResult.OK) process.Text = Path.GetFileName(dialog.FileName);
+                    if (dialog.ShowDialog(this) == DialogResult.OK)
+                    { process.Text = Path.GetFileName(dialog.FileName); executablePath.Text = dialog.FileName; }
             };
-            layout.Controls.Add(browse, 1, 1);
-            Label hint = new Label { Text = "파일 이름이 같은 모든 프로세스에 적용합니다. 백그라운드 실행도 포함합니다.",
-                AutoSize = true, ForeColor = SystemColors.GrayText, MaximumSize = new Size(420, 0) };
-            layout.Controls.Add(hint, 0, 2); layout.SetColumnSpan(hint, 2);
-            layout.Controls.Add(new Label { Text = "실행 중 사용할 전원 옵션", AutoSize = true, Margin = new Padding(3, 14, 3, 5) }, 0, 3);
+            FlowLayoutPanel pickers = new FlowLayoutPanel { AutoSize = true, Dock = DockStyle.Fill };
+            pickers.Controls.Add(browse);
+            Button running = new Button { Text = "실행 중에서 선택…", AutoSize = true };
+            running.Click += delegate
+            {
+                using (ProcessPickerForm picker = new ProcessPickerForm())
+                    if (picker.ShowDialog(this) == DialogResult.OK)
+                    { process.Text = picker.Result.ProcessName + ".exe"; executablePath.Text = picker.Result.ExecutablePath ?? ""; }
+            };
+            pickers.Controls.Add(running); layout.Controls.Add(pickers, 1, 1);
+            Label pathLabel = new Label { Text = "전체 경로 (선택)", AutoSize = true, Margin = new Padding(3, 10, 3, 3) };
+            layout.Controls.Add(pathLabel, 0, 2);
+            executablePath.Dock = DockStyle.Fill;
+            layout.Controls.Add(executablePath, 0, 3); layout.SetColumnSpan(executablePath, 2);
+            Label hint = new Label { Text = "경로를 지정하면 해당 EXE만 적용합니다. 비우면 같은 이름의 모든 EXE에 적용합니다.",
+                AutoSize = true, ForeColor = SystemColors.GrayText, MaximumSize = new Size(570, 0) };
+            layout.Controls.Add(hint, 0, 4); layout.SetColumnSpan(hint, 2);
+            layout.Controls.Add(new Label { Text = "실행 중 사용할 전원 옵션", AutoSize = true, Margin = new Padding(3, 14, 3, 5) }, 0, 5);
             PlanChoice.Populate(plan, plans, existing == null ? plans[0].Id.ToString() : existing.PlanId);
             plan.Dock = DockStyle.Fill;
-            layout.Controls.Add(plan, 0, 4); layout.SetColumnSpan(plan, 2);
+            layout.Controls.Add(plan, 0, 6); layout.SetColumnSpan(plan, 2);
             enabled.Text = "이 규칙 사용"; enabled.AutoSize = true;
             enabled.Checked = existing == null || existing.Enabled;
-            layout.Controls.Add(enabled, 0, 5);
+            layout.Controls.Add(enabled, 0, 7);
             FlowLayoutPanel buttons = new FlowLayoutPanel { Dock = DockStyle.Fill, AutoSize = true,
                 FlowDirection = FlowDirection.RightToLeft };
             Button cancel = new Button { Text = "취소", DialogResult = DialogResult.Cancel, AutoSize = true };
             Button save = new Button { Text = "확인", AutoSize = true };
             buttons.Controls.Add(cancel); buttons.Controls.Add(save);
-            layout.Controls.Add(buttons, 0, 6); layout.SetColumnSpan(buttons, 2);
+            layout.Controls.Add(buttons, 0, 8); layout.SetColumnSpan(buttons, 2);
             CancelButton = cancel; AcceptButton = save;
             save.Click += delegate
             {
@@ -88,7 +96,11 @@ namespace PowerShift
                     string name = RuleEngine.Normalize(process.Text);
                     if (String.IsNullOrWhiteSpace(name) || name.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0 || plan.SelectedItem == null)
                         throw new InvalidDataException("프로세스 이름과 전원 옵션을 선택해 주세요.");
-                    Result = new ProcessRule { ProcessName = name, PlanId = ((PlanChoice)plan.SelectedItem).Id.ToString(), Enabled = enabled.Checked };
+                    ProcessRule result = new ProcessRule { ProcessName = name, ExecutablePath = RuleEngine.NormalizePath(executablePath.Text),
+                        PlanId = ((PlanChoice)plan.SelectedItem).Id.ToString(), Enabled = enabled.Checked };
+                    AppSettings validation = new AppSettings { DefaultPlanId = result.PlanId };
+                    validation.Rules.Add(result); SettingsStore.Validate(validation);
+                    Result = result;
                     DialogResult = DialogResult.OK;
                 }
                 catch (Exception error) { Desktop.Error("규칙을 확인해 주세요.", error); }
@@ -112,7 +124,7 @@ namespace PowerShift
             Text = "PowerShift 설정";
             Font = new Font("Malgun Gothic", 9F);
             AutoScaleMode = AutoScaleMode.Dpi;
-            ClientSize = new Size(610, 480); MinimumSize = new Size(580, 460);
+            ClientSize = new Size(940, 520); MinimumSize = new Size(760, 460);
             StartPosition = FormStartPosition.CenterScreen;
             Icon = Desktop.CreateIcon(Guid.Parse(settings.DefaultPlanId));
             TableLayoutPanel root = new TableLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(20),
@@ -152,7 +164,10 @@ namespace PowerShift
                 AutoSize = true, Margin = new Padding(3, 6, 3, 10) });
             rules.View = View.Details; rules.FullRowSelect = true; rules.HideSelection = false;
             rules.MultiSelect = false; rules.Dock = DockStyle.Fill;
-            rules.Columns.Add("사용", 48); rules.Columns.Add("프로그램", 210); rules.Columns.Add("전원 옵션", 210);
+            rules.ShowItemToolTips = true;
+            rules.Columns.Add("사용", 48); rules.Columns.Add("프로그램", 180); rules.Columns.Add("전원 옵션", 150);
+            rules.Columns.Add("전체 경로", 420);
+            rules.Resize += delegate { rules.Columns[3].Width = Math.Max(260, rules.ClientSize.Width - 390); };
             programLayout.Controls.Add(rules);
             FlowLayoutPanel ruleButtons = new FlowLayoutPanel { Dock = DockStyle.Fill, AutoSize = true, WrapContents = true };
             AddButton(ruleButtons, "추가", delegate { EditRule(false); });
@@ -198,7 +213,9 @@ namespace PowerShift
             {
                 string name = "(삭제된 전원 옵션)";
                 foreach (Plan plan in plans) if (plan.Id.ToString() == rule.PlanId) name = plan.Name;
-                rules.Items.Add(new ListViewItem(new string[] { rule.Enabled ? "켜짐" : "꺼짐", rule.ProcessName + ".exe", name }));
+                string path = String.IsNullOrWhiteSpace(rule.ExecutablePath) ? "(이름 기준 · 모든 경로)" : rule.ExecutablePath;
+                rules.Items.Add(new ListViewItem(new string[] { rule.Enabled ? "켜짐" : "꺼짐", RuleEngine.Normalize(rule.ProcessName) + ".exe", name, path })
+                    { ToolTipText = path });
             }
             if (selected >= 0 && selected < rules.Items.Count) { rules.Items[selected].Selected = true; rules.EnsureVisible(selected); }
         }
@@ -210,9 +227,9 @@ namespace PowerShift
             {
                 if (dialog.ShowDialog(this) != DialogResult.OK) return;
                 for (int i = 0; i < draft.Rules.Count; i++)
-                    if (i != index && String.Equals(RuleEngine.Normalize(draft.Rules[i].ProcessName),
-                        dialog.Result.ProcessName, StringComparison.OrdinalIgnoreCase))
-                    { MessageBox.Show(this, "이미 등록한 프로그램입니다. 기존 규칙을 편집해 주세요.", "PowerShift"); return; }
+                    if (i != index && String.Equals(RuleEngine.RuleKey(draft.Rules[i]),
+                        RuleEngine.RuleKey(dialog.Result), StringComparison.OrdinalIgnoreCase))
+                    { MessageBox.Show(this, "같은 프로그램과 경로가 이미 등록되어 있습니다. 기존 규칙을 편집해 주세요.", "PowerShift"); return; }
                 if (index < 0) { draft.Rules.Add(dialog.Result); index = draft.Rules.Count - 1; }
                 else draft.Rules[index] = dialog.Result;
                 RefreshRules(index);

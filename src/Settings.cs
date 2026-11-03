@@ -10,6 +10,7 @@ namespace PowerShift
     {
         public bool Enabled { get; set; }
         public string ProcessName { get; set; }
+        public string ExecutablePath { get; set; }
         public string PlanId { get; set; }
         public ProcessRule() { Enabled = true; }
     }
@@ -32,7 +33,7 @@ namespace PowerShift
                 DefaultPlanId = DefaultPlanId, AutomaticSwitching = AutomaticSwitching };
             foreach (ProcessRule rule in Rules)
                 copy.Rules.Add(new ProcessRule { Enabled = rule.Enabled,
-                    ProcessName = rule.ProcessName, PlanId = rule.PlanId });
+                    ProcessName = rule.ProcessName, ExecutablePath = rule.ExecutablePath, PlanId = rule.PlanId });
             return copy;
         }
     }
@@ -84,8 +85,12 @@ namespace PowerShift
                 string normalized = RuleEngine.Normalize(rule.ProcessName);
                 if (String.IsNullOrWhiteSpace(normalized) || normalized.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0)
                     throw new InvalidDataException("프로세스 이름을 확인해 주세요.");
-                if (!names.Add(normalized))
-                    throw new InvalidDataException("같은 프로세스에 대한 규칙은 하나만 등록할 수 있습니다: " + normalized);
+                string executablePath = RuleEngine.NormalizePath(rule.ExecutablePath);
+                if (executablePath != null && (!String.Equals(RuleEngine.Normalize(executablePath), normalized, StringComparison.OrdinalIgnoreCase) ||
+                    !String.Equals(Path.GetExtension(executablePath), ".exe", StringComparison.OrdinalIgnoreCase)))
+                    throw new InvalidDataException("전체 경로의 EXE 파일 이름이 프로세스 이름과 일치해야 합니다.");
+                if (!names.Add(RuleEngine.RuleKey(rule)))
+                    throw new InvalidDataException("같은 프로그램과 경로에 대한 규칙은 하나만 등록할 수 있습니다: " + normalized);
             }
         }
     }
@@ -99,6 +104,21 @@ namespace PowerShift
 
     public static class RuleEngine
     {
+        public static string NormalizePath(string path)
+        {
+            if (String.IsNullOrWhiteSpace(path)) return null;
+            string value = Environment.ExpandEnvironmentVariables(path.Trim().Trim('"')).Replace('/', '\\');
+            if (value.StartsWith(@"\\?\UNC\", StringComparison.OrdinalIgnoreCase)) value = @"\\" + value.Substring(8);
+            else if (value.StartsWith(@"\\?\", StringComparison.OrdinalIgnoreCase)) value = value.Substring(4);
+            if (!(value.StartsWith(@"\\", StringComparison.Ordinal) ||
+                (value.Length >= 3 && Char.IsLetter(value[0]) && value[1] == ':' && value[2] == '\\')))
+                throw new InvalidDataException("실행 파일의 전체 경로를 입력해 주세요.");
+            return Path.GetFullPath(value);
+        }
+        public static string RuleKey(ProcessRule rule)
+        {
+            return Normalize(rule.ProcessName) + "|" + (NormalizePath(rule.ExecutablePath) ?? "*");
+        }
         public static string Normalize(string process)
         {
             string name = Path.GetFileName((process ?? "").Trim());
@@ -108,14 +128,28 @@ namespace PowerShift
         public static Decision Resolve(AppSettings settings, IEnumerable<string> running,
             ISet<Guid> available, Guid fallback)
         {
+            List<RunningProcess> processes = new List<RunningProcess>();
+            foreach (string name in running) processes.Add(new RunningProcess { ProcessName = Normalize(name),
+                ExecutablePath = Path.IsPathRooted(name) ? NormalizePath(name) : null });
+            return ResolveProcesses(settings, processes, available, fallback);
+        }
+        public static Decision ResolveProcesses(AppSettings settings, IEnumerable<RunningProcess> running,
+            ISet<Guid> available, Guid fallback)
+        {
             if (settings.AutomaticSwitching && settings.Rules.Count > 0)
             {
                 HashSet<string> processes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-                foreach (string name in running) processes.Add(Normalize(name));
+                HashSet<string> paths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                foreach (RunningProcess process in running)
+                {
+                    processes.Add(Normalize(process.ProcessName));
+                    if (!String.IsNullOrWhiteSpace(process.ExecutablePath)) paths.Add(NormalizePath(process.ExecutablePath));
+                }
                 foreach (ProcessRule rule in settings.Rules)
                 {
                     Guid id;
                     if (rule.Enabled && processes.Contains(Normalize(rule.ProcessName)) &&
+                        (String.IsNullOrWhiteSpace(rule.ExecutablePath) || paths.Contains(NormalizePath(rule.ExecutablePath))) &&
                         Guid.TryParse(rule.PlanId, out id) && available.Contains(id))
                         return new Decision { PlanId = id, ProcessName = Normalize(rule.ProcessName) };
                 }

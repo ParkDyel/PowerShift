@@ -51,6 +51,7 @@ namespace PowerShift
                 available.Remove(Balanced);
                 Assert(RuleEngine.Resolve(settings, new string[0], available, Saver).PlanId == Saver, "deleted default preserves current plan");
                 Assert(RuleEngine.Normalize(@"C:\Games\game.exe") == "game" && RuleEngine.Normalize("foo.bar.exe") == "foo.bar", "path and dotted executable normalization");
+                PathRules();
                 string folder = Path.Combine(Path.GetTempPath(), "PowerShiftTests-" + Guid.NewGuid().ToString("N"));
                 try
                 {
@@ -67,6 +68,17 @@ namespace PowerShift
                     bool duplicateRejected = false;
                     try { store.Save(loaded); } catch (InvalidDataException) { duplicateRejected = true; }
                     Assert(duplicateRejected && store.Load(Saver).Rules.Count == 2, "duplicate rejected before overwriting file");
+                    AppSettings paths = new AppSettings { DefaultPlanId = Saver.ToString() };
+                    paths.Rules.Add(new ProcessRule { ProcessName = "game", ExecutablePath = @"C:\Apps\A\game.exe", PlanId = Performance.ToString() });
+                    paths.Rules.Add(new ProcessRule { ProcessName = "game", ExecutablePath = @"C:\Apps\B\game.exe", PlanId = Balanced.ToString() });
+                    store.Save(paths);
+                    AppSettings restored = store.Load(Saver);
+                    Assert(restored.Rules.Count == 2 && restored.Rules[1].ExecutablePath == @"C:\Apps\B\game.exe" &&
+                        restored.Copy().Rules[0].ExecutablePath == @"C:\Apps\A\game.exe", "different paths persist and survive draft copy");
+                    restored.Rules.Add(new ProcessRule { ProcessName = "GAME.EXE", ExecutablePath = @"c:\apps\a\.\GAME.exe", PlanId = Saver.ToString() });
+                    bool duplicatePathRejected = false;
+                    try { store.Save(restored); } catch (InvalidDataException) { duplicatePathRejected = true; }
+                    Assert(duplicatePathRejected && store.Load(Saver).Rules.Count == 2, "same canonical path is rejected regardless of case");
                     File.WriteAllText(store.FilePath, "{corrupt");
                     bool corruptRejected = false;
                     try { store.Load(Saver); } catch (ArgumentException) { corruptRejected = true; }
@@ -83,6 +95,35 @@ namespace PowerShift
                 return 0;
             }
             catch (Exception error) { Console.WriteLine(error); return 1; }
+        }
+        private static void PathRules()
+        {
+            HashSet<Guid> available = new HashSet<Guid> { Saver, Balanced, Performance };
+            AppSettings settings = new AppSettings { DefaultPlanId = Saver.ToString() };
+            settings.Rules.Add(new ProcessRule { ProcessName = "game", ExecutablePath = @"C:\Apps\A\game.exe", PlanId = Performance.ToString() });
+            settings.Rules.Add(new ProcessRule { ProcessName = "game", ExecutablePath = @"C:\Apps\B\game.exe", PlanId = Balanced.ToString() });
+            SettingsStore.Validate(settings);
+            Assert(RuleEngine.ResolveProcesses(settings, new[] { new RunningProcess { ProcessName = "game", ExecutablePath = @"c:/apps/a/./GAME.EXE" } },
+                available, Saver).PlanId == Performance, "full path matches with case and separator normalization");
+            Assert(RuleEngine.ResolveProcesses(settings, new[] { new RunningProcess { ProcessName = "game", ExecutablePath = @"C:\Apps\B\game.exe" } },
+                available, Saver).PlanId == Balanced, "same EXE name at a different path uses its own rule");
+            Assert(RuleEngine.Resolve(settings, new[] { @"C:\Apps\C\game.exe" }, available, Saver).PlanId == Saver,
+                "same EXE name at unrelated path cannot activate a path rule");
+            Assert(RuleEngine.ResolveProcesses(settings, new[] { new RunningProcess { ProcessName = "game" } }, available, Saver).PlanId == Saver,
+                "unreadable process path cannot activate a path rule");
+            Assert(RuleEngine.Resolve(settings, new[] { @"C:\Apps\B\game.exe", @"C:\Apps\A\game.exe" }, available, Saver).PlanId == Performance,
+                "path rules preserve list priority when both executables run");
+            settings.Rules.Add(new ProcessRule { ProcessName = "game", PlanId = Balanced.ToString() });
+            SettingsStore.Validate(settings);
+            Assert(RuleEngine.Resolve(settings, new[] { @"C:\Apps\C\game.exe" }, available, Saver).PlanId == Balanced,
+                "legacy name-only rule remains a wildcard fallback");
+            settings.Rules[0].ExecutablePath = @"C:\Apps\A\other.exe";
+            bool mismatchRejected = false;
+            try { SettingsStore.Validate(settings); } catch (InvalidDataException) { mismatchRejected = true; }
+            Assert(mismatchRejected, "mismatched process name and path are rejected");
+            bool relativeRejected = false;
+            try { RuleEngine.NormalizePath(@"Apps\game.exe"); } catch (InvalidDataException) { relativeRejected = true; }
+            Assert(relativeRejected, "relative executable paths are rejected");
         }
         private static void Integration()
         {
@@ -103,6 +144,13 @@ namespace PowerShift
                 settings.Rules.Add(new ProcessRule { ProcessName = "ping", PlanId = target.ToString() });
                 child = Process.Start(new ProcessStartInfo("ping.exe", "-t 127.0.0.1")
                     { UseShellExecute = false, CreateNoWindow = true });
+                string imagePath = ProcessCatalog.ReadPath(child.Id);
+                Assert(!String.IsNullOrEmpty(imagePath) && String.Equals(Path.GetFileName(imagePath), "ping.exe", StringComparison.OrdinalIgnoreCase),
+                    "native query reads actual executable full path");
+                settings.Rules[0].ExecutablePath = imagePath;
+                Assert(RuleEngine.ResolveProcesses(settings, ProcessCatalog.Capture(settings.Rules), available, original).PlanId == target,
+                    "real process snapshot matches exact executable path");
+                settings.Rules[0].ExecutablePath = null;
                 Decision active = RuleEngine.Resolve(settings, Snapshot(), available, original);
                 PowerPlans.Set(active.PlanId);
                 Assert(active.IsOverride && PowerPlans.Active() == target, "real process launch selects profile");

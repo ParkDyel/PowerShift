@@ -69,26 +69,13 @@ namespace PowerShift
             foreach (Plan plan in plans) if (plan.Id == id) return plan.Name;
             return id.ToString();
         }
-        private static List<string> RunningProcesses()
-        {
-            List<string> names = new List<string>();
-            foreach (Process process in Process.GetProcesses())
-            {
-                using (process)
-                {
-                    try { names.Add(process.ProcessName); }
-                    catch (InvalidOperationException) { } // Process exited during the snapshot.
-                    catch (Win32Exception) { } // Protected process with no readable name.
-                }
-            }
-            return names;
-        }
         private void Evaluate()
         {
             if (++ticks % 30 == 0) ReloadPlans();
             Guid actual = PowerPlans.Active();
             bool hasRules = settings.AutomaticSwitching && settings.Rules.Exists(delegate(ProcessRule r) { return r.Enabled; });
-            Decision decision = RuleEngine.Resolve(settings, hasRules ? RunningProcesses() : new List<string>(), available, actual);
+            Decision decision = RuleEngine.ResolveProcesses(settings,
+                hasRules ? ProcessCatalog.Capture(settings.Rules) : new List<RunningProcess>(), available, actual);
             if (actual != decision.PlanId) PowerPlans.Set(decision.PlanId);
             status = decision.IsOverride
                 ? PlanName(decision.PlanId) + " · " + decision.ProcessName + ".exe 규칙 적용 중"
