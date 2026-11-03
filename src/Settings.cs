@@ -20,17 +20,19 @@ namespace PowerShift
         public int Version { get; set; }
         public string DefaultPlanId { get; set; }
         public bool AutomaticSwitching { get; set; }
+        public int LogRetentionDays { get; set; }
         public List<ProcessRule> Rules { get; set; }
         public AppSettings()
         {
             Version = 1;
             AutomaticSwitching = true;
+            LogRetentionDays = 3;
             Rules = new List<ProcessRule>();
         }
         public AppSettings Copy()
         {
             AppSettings copy = new AppSettings { Version = Version,
-                DefaultPlanId = DefaultPlanId, AutomaticSwitching = AutomaticSwitching };
+                DefaultPlanId = DefaultPlanId, AutomaticSwitching = AutomaticSwitching, LogRetentionDays = LogRetentionDays };
             foreach (ProcessRule rule in Rules)
                 copy.Rules.Add(new ProcessRule { Enabled = rule.Enabled,
                     ProcessName = rule.ProcessName, ExecutablePath = rule.ExecutablePath, PlanId = rule.PlanId });
@@ -76,6 +78,8 @@ namespace PowerShift
             if (settings == null || settings.Version != 1 || settings.Rules == null ||
                 !Guid.TryParse(settings.DefaultPlanId, out id))
                 throw new InvalidDataException("PowerShift 설정 파일의 형식을 확인해 주세요.");
+            if (settings.LogRetentionDays < 0)
+                throw new InvalidDataException("로그 자동 삭제 일수는 0 이상이어야 합니다.");
             HashSet<string> names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             foreach (ProcessRule rule in settings.Rules)
             {
@@ -99,6 +103,8 @@ namespace PowerShift
     {
         public Guid PlanId;
         public string ProcessName;
+        public string ExecutablePath;
+        public int RulePriority;
         public bool IsOverride { get { return ProcessName != null; } }
     }
 
@@ -145,13 +151,16 @@ namespace PowerShift
                     processes.Add(Normalize(process.ProcessName));
                     if (!String.IsNullOrWhiteSpace(process.ExecutablePath)) paths.Add(NormalizePath(process.ExecutablePath));
                 }
+                int priority = 0;
                 foreach (ProcessRule rule in settings.Rules)
                 {
+                    priority++;
                     Guid id;
                     if (rule.Enabled && processes.Contains(Normalize(rule.ProcessName)) &&
                         (String.IsNullOrWhiteSpace(rule.ExecutablePath) || paths.Contains(NormalizePath(rule.ExecutablePath))) &&
                         Guid.TryParse(rule.PlanId, out id) && available.Contains(id))
-                        return new Decision { PlanId = id, ProcessName = Normalize(rule.ProcessName) };
+                        return new Decision { PlanId = id, ProcessName = Normalize(rule.ProcessName),
+                            ExecutablePath = rule.ExecutablePath, RulePriority = priority };
                 }
             }
             Guid baseline;

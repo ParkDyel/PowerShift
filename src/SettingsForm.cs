@@ -118,7 +118,8 @@ namespace PowerShift
         private readonly ListView rules = new ListView();
         private readonly Label status = new Label();
         private readonly Action<AppSettings, bool> saveSettings;
-        public SettingsForm(AppSettings settings, List<Plan> choices, string currentStatus, Action<AppSettings, bool> save)
+        private readonly LogsView logsView;
+        public SettingsForm(AppSettings settings, List<Plan> choices, string currentStatus, Action<AppSettings, bool> save, LogStore logs)
         {
             draft = settings.Copy(); plans = choices; saveSettings = save;
             Text = "PowerShift 설정";
@@ -142,7 +143,9 @@ namespace PowerShift
             TabControl tabs = new TabControl { Dock = DockStyle.Fill };
             TabPage global = new TabPage("기본 설정") { Padding = new Padding(16) };
             TabPage programs = new TabPage("프로그램별 설정") { Padding = new Padding(16) };
-            tabs.TabPages.Add(global); tabs.TabPages.Add(programs); root.Controls.Add(tabs);
+            TabPage logTab = new TabPage("로그") { Padding = new Padding(16) };
+            logsView = new LogsView(logs, draft.LogRetentionDays); logTab.Controls.Add(logsView);
+            tabs.TabPages.Add(global); tabs.TabPages.Add(programs); tabs.TabPages.Add(logTab); root.Controls.Add(tabs);
             TableLayoutPanel general = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, ColumnCount = 1 };
             general.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100)); global.Controls.Add(general);
             general.Controls.Add(new Label { Text = "기본 전원 옵션", AutoSize = true });
@@ -191,6 +194,7 @@ namespace PowerShift
                     if (baseline.SelectedItem == null) throw new InvalidDataException("기본 전원 옵션을 선택해 주세요.");
                     draft.DefaultPlanId = ((PlanChoice)baseline.SelectedItem).Id.ToString();
                     draft.AutomaticSwitching = automatic.Checked;
+                    draft.LogRetentionDays = logsView.RetentionDays;
                     SettingsStore.Validate(draft);
                     saveSettings(draft, startup.Checked);
                     DialogResult = DialogResult.OK; Close();
@@ -200,6 +204,7 @@ namespace PowerShift
             FormClosed += delegate { Icon.Dispose(); };
         }
         public void UpdateStatus(string text) { status.Text = text; }
+        public void RefreshLogs() { logsView.RefreshEntries(); }
         private static void AddButton(Control parent, string text, EventHandler click)
         {
             Button button = new Button { Text = text, AutoSize = true, MinimumSize = new Size(64, 0) };

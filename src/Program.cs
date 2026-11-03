@@ -17,6 +17,8 @@ namespace PowerShift
         private readonly EventWaitHandle showSettings;
         private readonly EventWaitHandle exitSignal;
         private readonly SettingsStore store;
+        private readonly LogStore logs;
+        private Decision previousDecision;
         private AppSettings settings;
         private List<Plan> plans;
         private HashSet<Guid> available;
@@ -35,6 +37,8 @@ namespace PowerShift
             store = new SettingsStore(SettingsStore.DefaultPath);
             Guid active = PowerPlans.Active();
             settings = store.Load(active);
+            logs = new LogStore(LogStore.DefaultPath);
+            logs.Prune(settings.LogRetentionDays, DateTimeOffset.UtcNow);
             ReloadPlans();
             store.Save(settings);
             menu = new ContextMenuStrip { Font = new Font("Malgun Gothic", 9F), ShowImageMargin = false, ShowCheckMargin = true };
@@ -51,6 +55,7 @@ namespace PowerShift
             {
                 if (exitSignal.WaitOne(0)) { ExitThread(); return; }
                 if (showSettings.WaitOne(0)) OpenSettings();
+                if (ticks % 1800 == 0) logs.Prune(settings.LogRetentionDays, DateTimeOffset.UtcNow);
                 EvaluateSafely();
             };
             timer.Start();
@@ -69,32 +74,64 @@ namespace PowerShift
             foreach (Plan plan in plans) if (plan.Id == id) return plan.Name;
             return id.ToString();
         }
-        private void Evaluate()
+        private static string RuleName(Decision decision)
+        {
+            return decision == null ? "없음" : decision.IsOverride
+                ? "프로그램 규칙 #" + decision.RulePriority + ": " + decision.ProcessName + ".exe" : "기본값";
+        }
+        private static string DecisionKey(Decision decision)
+        {
+            return decision == null ? "" : decision.PlanId + "|" + RuleName(decision) + "|" + decision.ExecutablePath;
+        }
+        private void Record(string level, string from, string to, Decision decision, string reason)
+        {
+            logs.Append(new LogEntry { Level = level, FromPlan = from, ToPlan = to,
+                PreviousRule = RuleName(previousDecision), Rule = RuleName(decision),
+                ExecutablePath = decision == null ? null : decision.ExecutablePath, Reason = reason });
+        }
+        private void Evaluate(string trigger)
         {
             if (++ticks % 30 == 0) ReloadPlans();
             Guid actual = PowerPlans.Active();
             bool hasRules = settings.AutomaticSwitching && settings.Rules.Exists(delegate(ProcessRule r) { return r.Enabled; });
             Decision decision = RuleEngine.ResolveProcesses(settings,
                 hasRules ? ProcessCatalog.Capture(settings.Rules) : new List<RunningProcess>(), available, actual);
-            if (actual != decision.PlanId) PowerPlans.Set(decision.PlanId);
+            bool changedRule = previousDecision != null && !String.Equals(DecisionKey(previousDecision), DecisionKey(decision), StringComparison.OrdinalIgnoreCase);
+            if (actual != decision.PlanId)
+            {
+                try { PowerPlans.Set(decision.PlanId); }
+                catch (Exception error)
+                {
+                    if (lastError != error.Message) Record("오류", PlanName(actual), PlanName(decision.PlanId), decision, "전환 실패: " + error.Message);
+                    throw;
+                }
+                string reason = trigger;
+                if (reason == null)
+                    reason = decision.IsOverride ? (previousDecision == null || changedRule ? "실행 중인 프로그램 규칙 적용" : "현재 규칙의 모드 재적용")
+                        : previousDecision != null && previousDecision.IsOverride ? "대상 프로세스 종료 · 기본값 복귀" : "저장된 기본값 적용";
+                Record("전환", PlanName(actual), PlanName(decision.PlanId), decision, reason);
+            }
+            else if (changedRule)
+                Record("규칙 변경", PlanName(actual), PlanName(actual), decision, (trigger ?? (decision.IsOverride ? "우선 적용 규칙 변경" : "대상 프로세스 종료 · 기본값 복귀")) + " (전원 모드 유지)");
+            previousDecision = decision;
             status = decision.IsOverride
                 ? PlanName(decision.PlanId) + " · " + decision.ProcessName + ".exe 규칙 적용 중"
                 : PlanName(decision.PlanId) + " · 기본값";
             UpdateIcon(decision.PlanId);
             string tooltip = "PowerShift · " + status;
             tray.Text = tooltip.Length > 63 ? tooltip.Substring(0, 63) : tooltip;
-            if (settingsForm != null && !settingsForm.IsDisposed) settingsForm.UpdateStatus(status);
+            if (settingsForm != null && !settingsForm.IsDisposed) { settingsForm.UpdateStatus(status); settingsForm.RefreshLogs(); }
             lastError = null;
         }
-        private void EvaluateSafely()
+        private void EvaluateSafely(string trigger = null)
         {
-            try { Evaluate(); }
+            try { Evaluate(trigger); }
             catch (Exception error)
             {
                 if (currentIcon == null) UpdateIcon(Guid.Empty);
                 tray.Text = "PowerShift · 전환 실패 (설정에서 확인)";
                 status = "전환 실패: " + error.Message;
-                if (settingsForm != null && !settingsForm.IsDisposed) settingsForm.UpdateStatus(status);
+                if (settingsForm != null && !settingsForm.IsDisposed) { settingsForm.UpdateStatus(status); settingsForm.RefreshLogs(); }
                 if (lastError != error.Message && tray.Visible)
                     tray.ShowBalloonTip(5000, "PowerShift", status, ToolTipIcon.Warning);
                 lastError = error.Message;
@@ -132,7 +169,7 @@ namespace PowerShift
                         try
                         {
                             AppSettings next = settings.Copy(); next.DefaultPlanId = selected.Id.ToString();
-                            store.Save(next); settings = next; EvaluateSafely();
+                            store.Save(next); settings = next; EvaluateSafely("기본값 변경");
                         }
                         catch (Exception error) { Desktop.Error("기본값을 저장할 수 없습니다.", error); }
                     };
@@ -147,7 +184,7 @@ namespace PowerShift
                 try
                 {
                     AppSettings next = settings.Copy(); next.AutomaticSwitching = !next.AutomaticSwitching;
-                    store.Save(next); settings = next; EvaluateSafely();
+                    store.Save(next); settings = next; EvaluateSafely(next.AutomaticSwitching ? "프로그램별 자동 전환 켜기" : "프로그램별 자동 전환 끄기");
                 }
                 catch (Exception error) { Desktop.Error("자동 전환 설정을 저장할 수 없습니다.", error); }
             };
@@ -173,7 +210,12 @@ namespace PowerShift
                 if (startup != previousStartup) Startup.Set(previousStartup);
                 throw;
             }
-            settings = next.Copy(); EvaluateSafely();
+            string reason = settings.AutomaticSwitching != next.AutomaticSwitching
+                ? (next.AutomaticSwitching ? "프로그램별 자동 전환 켜기" : "프로그램별 자동 전환 끄기")
+                : settings.DefaultPlanId != next.DefaultPlanId ? "기본값 변경" : "프로그램 규칙 변경";
+            settings = next.Copy();
+            logs.Prune(settings.LogRetentionDays, DateTimeOffset.UtcNow);
+            EvaluateSafely(reason);
         }
         private void OpenSettings()
         {
@@ -182,7 +224,7 @@ namespace PowerShift
             try
             {
                 ReloadPlans();
-                settingsForm = new SettingsForm(settings, plans, status, CommitSettings);
+                settingsForm = new SettingsForm(settings, plans, status, CommitSettings, logs);
                 settingsForm.FormClosed += delegate { SettingsForm old = settingsForm; settingsForm = null; old.Dispose(); };
                 settingsForm.Show();
             }
@@ -193,8 +235,12 @@ namespace PowerShift
             try
             {
                 Guid baseline;
-                if (Guid.TryParse(settings.DefaultPlanId, out baseline) && available.Contains(baseline) && PowerPlans.Active() != baseline)
+                Guid actual = PowerPlans.Active();
+                if (Guid.TryParse(settings.DefaultPlanId, out baseline) && available.Contains(baseline) && actual != baseline)
+                {
                     PowerPlans.Set(baseline);
+                    Record("전환", PlanName(actual), PlanName(baseline), new Decision { PlanId = baseline }, "앱 종료 · 기본값 복귀");
+                }
             }
             catch (Exception error) { Desktop.Error("기본 전원 옵션으로 복원할 수 없습니다.", error); }
             Dispose(); base.ExitThreadCore();

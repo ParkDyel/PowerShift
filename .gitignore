@@ -1,6 +1,8 @@
 bin/
 *.lnk
 *.log
+*.jsonl
+logs/
 *.tmp
 settings.json
 TestResults/

@@ -52,11 +52,21 @@ namespace PowerShift
                 Assert(RuleEngine.Resolve(settings, new string[0], available, Saver).PlanId == Saver, "deleted default preserves current plan");
                 Assert(RuleEngine.Normalize(@"C:\Games\game.exe") == "game" && RuleEngine.Normalize("foo.bar.exe") == "foo.bar", "path and dotted executable normalization");
                 PathRules();
+                LogTests();
                 string folder = Path.Combine(Path.GetTempPath(), "PowerShiftTests-" + Guid.NewGuid().ToString("N"));
                 try
                 {
                     SettingsStore store = new SettingsStore(Path.Combine(folder, "settings.json"));
                     Assert(store.Load(Saver).DefaultPlanId == Saver.ToString(), "first launch adopts current plan");
+                    Directory.CreateDirectory(folder);
+                    File.WriteAllText(store.FilePath, "{\"Version\":1,\"DefaultPlanId\":\"" + Saver + "\",\"AutomaticSwitching\":true,\"Rules\":[]}");
+                    Assert(store.Load(Saver).LogRetentionDays == 3, "existing settings migrate to three-day retention");
+                    AppSettings noExpiry = Sample(); noExpiry.LogRetentionDays = 0; store.Save(noExpiry);
+                    Assert(store.Load(Saver).LogRetentionDays == 0 && noExpiry.Copy().LogRetentionDays == 0, "zero-day retention persists and survives draft copy");
+                    noExpiry.LogRetentionDays = -1;
+                    bool negativeRejected = false;
+                    try { store.Save(noExpiry); } catch (InvalidDataException) { negativeRejected = true; }
+                    Assert(negativeRejected && store.Load(Saver).LogRetentionDays == 0, "negative retention is rejected without overwriting settings");
                     settings = Sample(); store.Save(settings);
                     settings.DefaultPlanId = Balanced.ToString(); store.Save(settings);
                     AppSettings loaded = store.Load(Saver);
@@ -95,6 +105,42 @@ namespace PowerShift
                 return 0;
             }
             catch (Exception error) { Console.WriteLine(error); return 1; }
+        }
+        private static void LogTests()
+        {
+            string folder = Path.Combine(Path.GetTempPath(), "PowerShiftLogTests-" + Guid.NewGuid().ToString("N"));
+            DateTimeOffset now = new DateTimeOffset(2026, 11, 3, 12, 0, 0, TimeSpan.Zero);
+            try
+            {
+                LogStore store = new LogStore(folder);
+                DateTimeOffset[] times = { now.AddDays(-4), now.AddDays(-3).AddTicks(-1), now.AddDays(-3), now.AddHours(-1), now.AddHours(1) };
+                foreach (DateTimeOffset time in times)
+                    Assert(store.Append(new LogEntry { TimestampUtc = time.ToString("o"), Level = "전환", FromPlan = "절전", ToPlan = "고성능",
+                        PreviousRule = "기본값", Rule = "프로그램 규칙 #1: game.exe", ExecutablePath = @"C:\Games\game.exe", Reason = "실행 중인 프로그램 규칙 적용" }), "append audit record at " + time.ToString("o"));
+                Assert(store.ReadRecent(2).Count == 2 && store.ReadRecent(2)[0].TimestampUtc == times[4].ToString("o"), "recent log view is bounded and newest first");
+                LogEntry entry = store.ReadRecent(1)[0];
+                Assert(entry.FromPlan == "절전" && entry.ToPlan == "고성능" && entry.Rule.Contains("#1") && entry.PreviousRule == "기본값" &&
+                    entry.ExecutablePath == @"C:\Games\game.exe" && entry.Reason.Contains("규칙"), "audit fields survive serialization including Unicode");
+                long revision = store.Revision;
+                Assert(store.Prune(0, now) && store.ReadRecent(100).Count == 5 && store.Revision == revision, "zero retention never deletes old logs");
+                string unrelated = Path.Combine(folder, "unrelated.jsonl"); File.WriteAllText(unrelated, "keep");
+                string malformedFile = Path.Combine(folder, "PowerShift-2026-10-30.jsonl");
+                File.AppendAllText(malformedFile, "not-json" + Environment.NewLine);
+                Assert(store.Prune(3, now) && store.ReadRecent(100).Count == 3, "three-day retention removes only expired entries");
+                Assert(store.ReadRecent(100).Any(e => e.TimestampUtc == times[2].ToString("o")), "exact retention boundary is retained");
+                Assert(File.ReadAllText(malformedFile).Trim() == "not-json" && File.ReadAllText(unrelated) == "keep", "unknown records and unrelated files are preserved");
+                Assert(store.Prune(Int32.MaxValue, now) && store.ReadRecent(100).Count == 3, "very large retention cannot overflow date arithmetic");
+                LogStore reopened = new LogStore(folder);
+                Assert(reopened.ReadRecent(100).Count == 3, "log history survives reopening");
+                string blocked = Path.Combine(folder, "blocked"); File.WriteAllText(blocked, "file");
+                LogStore unwritable = new LogStore(blocked);
+                Assert(!unwritable.Append(new LogEntry { Reason = "test" }) && !String.IsNullOrEmpty(unwritable.LastError), "log write failure is reported without throwing into power switching");
+            }
+            finally
+            {
+                if (Directory.Exists(folder))
+                { foreach (string file in Directory.GetFiles(folder)) File.Delete(file); Directory.Delete(folder); }
+            }
         }
         private static void PathRules()
         {
