@@ -50,7 +50,7 @@ try {
     Check ($shortcut.TargetPath -eq $app -and $shortcut.Arguments -eq '--settings') 'Start menu shortcut points to installed app'
     Check ((ReadStartup) -eq ('"' + $app + '"')) 'selected startup task registers installed path'
     $metadata = UninstallMetadata
-    Check ($metadata.DisplayName -eq 'PowerShift' -and $metadata.DisplayVersion -eq '0.4.0') 'Windows Installed Apps registration created'
+    Check ($metadata.DisplayName -eq 'PowerShift' -and $metadata.DisplayVersion -eq '0.4.1') 'Windows Installed Apps registration created'
     $ownedApp = Start-Process -FilePath $app -WindowStyle Hidden -PassThru
     Check (!$ownedApp.WaitForExit(3000)) 'installed app launches'
     $retainedSettings = [IO.File]::ReadAllText($settingsPath)

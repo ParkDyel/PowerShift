@@ -20,7 +20,7 @@ Windows 10/11, Windows PowerShell 5.1, .NET Framework 4.x를 사용합니다.
 
 ### 설치 프로그램 (권장)
 
-[최신 릴리스](https://github.com/ParkDyel/PowerShift/releases/latest)에서 **PowerShift-Setup-0.4.0.exe**를 내려받아 실행하세요.
+[최신 릴리스](https://github.com/ParkDyel/PowerShift/releases/latest)에서 **PowerShift-Setup-0.4.1.exe**를 내려받아 실행하세요.
 설치 마법사에서 폴더와 로그인 시 자동 실행 여부를 선택하면 됩니다. 별도의 PowerShell 명령을 입력할 필요가 없습니다.
 
 - 현재 사용자 계정에 설치하며 관리자 권한을 요구하지 않습니다.
@@ -82,7 +82,10 @@ Windows 설정의 별도 **전원 모드**와 제어판의 **전원 관리 구�
 
 **로그 자동 삭제**에 일수를 입력하고 저장하세요. 기본값은 **3일**이며 **0이면 자동 삭제하지 않습니다**.
 설정 저장 시, 앱 시작 시, 실행 중 매시간 보관 기간이 지난 로그 항목을 정리합니다.
-기간은 기록 시점부터 경과한 일수(24시간) 기준입니다. UI는 최신 500개를 표시하며, 보관 중인 나머지 기록도 로컬 파일에 남습니다.
+기간은 기록 시점부터 경과한 일수(24시간) 기준입니다. 최신 100개부터 표시하며 아래로 스크롤하면 이전 기록을 100개씩 불러옵니다.
+**이전 기록 더 불러오기** 버튼도 사용할 수 있고, 읽는 동안 진행 표시와 **불러오는 중…** 안내가 나타납니다.
+새 로그가 생겨도 읽던 위치와 선택은 유지됩니다. **새로고침**을 누르면 최신 기록부터 다시 표시합니다.
+큰 이력은 페이지당 읽기 범위와 화면 메모리 한도를 적용해 일부만 표시할 수 있습니다. 보관 중인 나머지 기록은 로컬 파일에 남습니다.
 로그 저장에 실패해도 전원 전환은 계속 동작하며 로그 탭에 오류가 표시됩니다.
 
 ## 저장 위치와 제거
@@ -117,7 +120,7 @@ powershell.exe -NoProfile -ExecutionPolicy RemoteSigned -File .\tests\SmokeTest.
 
 # 설치·실행 중 업그레이드·제거·설정/로그 보존 검증
 # 개발/검증용 새 폴더를 지정하세요. 기존 설치가 있는 계정에서는 실행을 거부합니다.
-powershell.exe -NoProfile -ExecutionPolicy RemoteSigned -File .\tests\InstallerTest.ps1 -InstallerPath .\dist\PowerShift-Setup-0.4.0.exe -InstallDirectory "$env:TEMP\PowerShift-Installer-Test"
+powershell.exe -NoProfile -ExecutionPolicy RemoteSigned -File .\tests\InstallerTest.ps1 -InstallerPath .\dist\PowerShift-Setup-0.4.1.exe -InstallDirectory "$env:TEMP\PowerShift-Installer-Test"
 ```
 
 `bin\PowerShift.exe`가 기본 실행 방식입니다. PowerShell 호스트가 상주하지 않습니다.

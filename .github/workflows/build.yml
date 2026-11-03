@@ -40,9 +40,9 @@ jobs:
         run: ./Build-Installer.ps1 -IsccPath $env:POWERSHIFT_ISCC -UseExistingBinary
       - name: Check installation, running-app upgrade, and uninstall
         shell: powershell
-        run: ./tests/InstallerTest.ps1 -InstallerPath ./dist/PowerShift-Setup-0.4.0.exe -InstallDirectory "$env:RUNNER_TEMP\PowerShift-Installer-Test"
+        run: ./tests/InstallerTest.ps1 -InstallerPath ./dist/PowerShift-Setup-0.4.1.exe -InstallDirectory "$env:RUNNER_TEMP\PowerShift-Installer-Test"
       - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
-          name: PowerShift-Setup-0.4.0
-          path: dist/PowerShift-Setup-0.4.0.exe
+          name: PowerShift-Setup-0.4.1
+          path: dist/PowerShift-Setup-0.4.1.exe
           if-no-files-found: error

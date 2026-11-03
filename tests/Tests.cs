@@ -54,6 +54,8 @@ namespace PowerShift
                 PathRules();
                 LogTests();
                 SecurityResourceTests();
+                LogPagingTests();
+                LogViewTests();
                 string folder = Path.Combine(Path.GetTempPath(), "PowerShiftTests-" + Guid.NewGuid().ToString("N"));
                 try
                 {
@@ -106,6 +108,160 @@ namespace PowerShift
                 return 0;
             }
             catch (Exception error) { Console.WriteLine(error); return 1; }
+        }
+        private static void LogPagingTests()
+        {
+            string folder = Path.Combine(Path.GetTempPath(), "PowerShiftPagingTests-" + Guid.NewGuid().ToString("N"));
+            try
+            {
+                LogStore store = new LogStore(folder);
+                Assert(!new LogPageReader(folder).HasMore, "empty log history has no pages");
+                Directory.CreateDirectory(folder);
+                string first = Path.Combine(folder, "PowerShift-2026-11-02.jsonl");
+                string second = Path.Combine(folder, "PowerShift-2026-11-03.jsonl");
+                using (StreamWriter writer = new StreamWriter(first, false, new System.Text.UTF8Encoding(true)))
+                    for (int i = 0; i < 153; i++) writer.WriteLine("{\"Rule\":\"한글 🚗 " + i + "\"}");
+                using (StreamWriter writer = new StreamWriter(second, false, new System.Text.UTF8Encoding(false)))
+                {
+                    for (int i = 153; i < 317; i++) writer.WriteLine("{\"Rule\":\"한글 🚗 " + i + "\"}");
+                    writer.Write("\n{broken}\r\n{\"Rule\":\"한글 🚗 317\"}");
+                }
+                LogPageReader reader = new LogPageReader(folder);
+                List<LogEntry> page = reader.ReadPage(100);
+                Assert(page.Count == 100 && page[0].Rule == "한글 🚗 317" && page[99].Rule == "한글 🚗 218",
+                    "first page reads latest 100, skipping malformed and blank lines without final newline");
+                File.AppendAllText(second, "\n{\"Rule\":\"later append\"}\n");
+                List<LogEntry> all = new List<LogEntry>(page);
+                while (reader.HasMore) all.AddRange(reader.ReadPage(100));
+                Assert(all.Count == 318 && all.Select((entry, index) => entry.Rule == "한글 🚗 " + (317 - index)).All(ok => ok),
+                    "pages cross daily files and UTF-8 BOM with no duplicates, gaps, or appended snapshot rows");
+                Assert(reader.ReadPage(100).Count == 0 && new LogPageReader(folder).ReadPage(100)[0].Rule == "later append",
+                    "exhausted cursor stays empty and refresh includes newly appended records");
+                bool badCount = false;
+                try { reader.ReadPage(101); } catch (ArgumentOutOfRangeException) { badCount = true; }
+                Assert(badCount, "page size cannot exceed bounded 100 rows");
+                File.Delete(first);
+                using (StreamWriter writer = new StreamWriter(second))
+                {
+                    writer.WriteLine("{\"Rule\":\"oldest\"}");
+                    for (int i = 0; i < 6000; i++) writer.WriteLine(new string('x', 1000));
+                    writer.WriteLine("{\"Rule\":\"newest\"}");
+                }
+                reader = new LogPageReader(folder);
+                page = reader.ReadPage(100);
+                Assert(page.Count == 1 && page[0].Rule == "newest" && reader.HasMore,
+                    "one page stops at 4 MiB even when malformed records are sparse");
+                page = reader.ReadPage(100);
+                Assert(page.Count == 1 && page[0].Rule == "oldest" && !reader.HasMore,
+                    "next page resumes beyond 4 MiB without losing the boundary record");
+                string longRule = new string('가', 20000);
+                File.WriteAllText(second, "{\"Rule\":\"" + longRule + "\"}\n{\"Rule\":\"tail\"}\n", System.Text.Encoding.UTF8);
+                page = new LogPageReader(folder).ReadPage(100);
+                Assert(page.Count == 2 && page[1].Rule == longRule, "reverse chunks preserve a multibyte line longer than the read buffer");
+                reader = new LogPageReader(folder);
+                File.WriteAllText(second, "{}");
+                bool changed = false;
+                try { reader.ReadPage(100); } catch (IOException) { changed = true; }
+                Assert(changed, "truncated snapshot requires refresh rather than silently skipping history");
+                File.WriteAllText(second, new string('x', LogStore.MaxLineCharacters + 1));
+                bool oversized = false;
+                try { new LogPageReader(folder).ReadPage(100); } catch (InvalidDataException) { oversized = true; }
+                Assert(oversized, "paged reader rejects oversized lines like the original bounded reader");
+                long before = store.PruneRevision;
+                File.WriteAllText(second, "{\"TimestampUtc\":\"2020-01-01T00:00:00Z\"}\n");
+                Assert(store.Prune(3, DateTimeOffset.UtcNow) && store.PruneRevision > before,
+                    "retention invalidates browsing snapshots");
+            }
+            finally
+            {
+                if (Directory.Exists(folder))
+                { foreach (string file in Directory.GetFiles(folder)) File.Delete(file); Directory.Delete(folder); }
+            }
+        }
+        private static IEnumerable<System.Windows.Forms.Control> Descendants(System.Windows.Forms.Control parent)
+        {
+            foreach (System.Windows.Forms.Control child in parent.Controls)
+            {
+                yield return child;
+                foreach (System.Windows.Forms.Control descendant in Descendants(child)) yield return descendant;
+            }
+        }
+        private static void WaitForLogs(System.Windows.Forms.Button refresh)
+        {
+            Stopwatch clock = Stopwatch.StartNew();
+            while (!refresh.Enabled && clock.ElapsedMilliseconds < 10000)
+            { System.Windows.Forms.Application.DoEvents(); System.Threading.Thread.Sleep(5); }
+            if (!refresh.Enabled) throw new Exception("Log UI worker did not finish.");
+        }
+        private static void LogViewTests()
+        {
+            string folder = Path.Combine(Path.GetTempPath(), "PowerShiftLogViewTests-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(folder);
+            try
+            {
+                LogStore store = new LogStore(folder);
+                string path = Path.Combine(folder, "PowerShift-" + DateTime.UtcNow.ToString("yyyy-MM-dd") + ".jsonl");
+                using (StreamWriter writer = new StreamWriter(path))
+                    for (int i = 0; i < 317; i++) writer.WriteLine("{\"Rule\":\"rule " + i + "\"}");
+                using (System.Windows.Forms.Form host = new System.Windows.Forms.Form
+                    { ShowInTaskbar = false, StartPosition = System.Windows.Forms.FormStartPosition.Manual,
+                        Location = new System.Drawing.Point(-3000, -3000), Size = new System.Drawing.Size(900, 500) })
+                using (LogsView view = new LogsView(store, 3))
+                {
+                    host.Controls.Add(view);
+                    System.Windows.Forms.Button refresh = Descendants(view).OfType<System.Windows.Forms.Button>().Single(b => b.Text == "새로고침");
+                    System.Windows.Forms.Button more = Descendants(view).OfType<System.Windows.Forms.Button>().Single(b => b != refresh);
+                    System.Windows.Forms.ListView list = Descendants(view).OfType<System.Windows.Forms.ListView>().Single();
+                    System.Windows.Forms.ProgressBar progress = Descendants(view).OfType<System.Windows.Forms.ProgressBar>().Single();
+                    host.Show();
+                    Assert(progress.Visible && !refresh.Enabled, "log load shows a marquee indicator and disables duplicate requests");
+                    WaitForLogs(refresh);
+                    Assert(list.Items.Count == 100 && list.Items[0].SubItems[3].Text == "rule 316" && !progress.Visible,
+                        "log UI initially displays only the latest 100 rows and clears indicator");
+                    more.PerformClick(); WaitForLogs(refresh);
+                    Assert(list.Items.Count == 200 && list.Items[199].SubItems[3].Text == "rule 117",
+                        "load-more appends older rows in order");
+                    list.Items[150].Selected = true; list.EnsureVisible(150);
+                    int top = list.TopItem.Index;
+                    store.Append(new LogEntry { Rule = "new live record" }); view.RefreshEntries();
+                    Assert(refresh.Enabled && list.Items.Count == 200 && list.TopItem.Index == top && list.SelectedIndices[0] == 150,
+                        "live log notification preserves older rows, scroll position, and selection");
+                    refresh.PerformClick(); WaitForLogs(refresh);
+                    Assert(list.Items.Count == 100 && list.Items[0].SubItems[3].Text == "new live record",
+                        "explicit refresh resets snapshot and includes new live records");
+                    Assert(store.Prune(1, DateTimeOffset.UtcNow.AddDays(2)), "retention completes while log viewer is open");
+                    view.RefreshEntries(); WaitForLogs(refresh);
+                    Assert(list.Items.Count == 100 && list.Items[0].SubItems[3].Text == "rule 316",
+                        "retention invalidation reloads safely without stale cursor results");
+                    File.WriteAllText(path, new string('x', LogStore.MaxLineCharacters + 1));
+                    refresh.PerformClick(); WaitForLogs(refresh);
+                    Assert(refresh.Enabled && !progress.Visible && !more.Enabled && Descendants(view).OfType<System.Windows.Forms.Label>()
+                        .Any(label => label.Text.StartsWith("로그를 읽을 수 없습니다:")), "read errors clear indicator and offer refresh recovery");
+                    using (StreamWriter writer = new StreamWriter(path))
+                        for (int i = 0; i < 50; i++) writer.WriteLine("{\"Rule\":\"" + new string('x', 100000) + "\"}");
+                    long length = new FileInfo(path).Length;
+                    refresh.PerformClick(); WaitForLogs(refresh);
+                    Assert(list.Items.Count > 0 && list.Items.Count < 50 && !more.Enabled && new FileInfo(path).Length == length &&
+                        Descendants(view).OfType<System.Windows.Forms.Label>().Any(label => label.Text.Contains("화면 메모리 한도")),
+                        "display memory limit stops further loading without truncating stored history");
+                    File.WriteAllText(path, "{\"Rule\":\"recovered\"}\n");
+                    refresh.PerformClick(); WaitForLogs(refresh);
+                    Assert(list.Items.Count == 1 && list.Items[0].SubItems[3].Text == "recovered" && !more.Enabled,
+                        "refresh recovers from read errors and an exhausted history disables load-more");
+                    using (StreamWriter writer = new StreamWriter(path))
+                        for (int i = 0; i < 200; i++) writer.WriteLine("{\"Rule\":\"close test " + i + "\"}");
+                    refresh.PerformClick(); WaitForLogs(refresh);
+                    more.PerformClick(); host.Close();
+                    // A pending completion must not access disposed controls.
+                    Stopwatch clock = Stopwatch.StartNew();
+                    while (clock.ElapsedMilliseconds < 100) { System.Windows.Forms.Application.DoEvents(); System.Threading.Thread.Sleep(5); }
+                }
+            }
+            finally
+            {
+                if (Directory.Exists(folder))
+                { foreach (string file in Directory.GetFiles(folder)) File.Delete(file); Directory.Delete(folder); }
+            }
         }
         private static void LogTests()
         {
@@ -233,6 +389,9 @@ namespace PowerShift
                 bool readRejected = false;
                 try { redirected.ReadRecent(10); } catch (IOException) { readRejected = true; }
                 Assert(readRejected, "junction log root cannot read outside history");
+                bool pageRejected = false;
+                try { new LogPageReader(redirected.DirectoryPath).ReadPage(100); } catch (IOException) { pageRejected = true; }
+                Assert(pageRejected, "paged reader cannot browse outside history through a junction");
                 string outsideSettings = Path.Combine(outside, "settings.json");
                 File.WriteAllText(outsideSettings, "must remain");
                 SettingsStore redirectedSettings = new SettingsStore(Path.Combine(root, "data-link", "settings.json"));

@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Drawing;
+using System.Threading;
 using System.Windows.Forms;
 
 namespace PowerShift
@@ -8,21 +9,30 @@ namespace PowerShift
     internal sealed class LogsView : UserControl
     {
         private readonly LogStore store;
-        private readonly ListView entries = new ListView();
+        private readonly ScrollListView entries = new ScrollListView();
         private readonly TextBox details = new TextBox();
         private readonly Label info = new Label();
         private readonly NumericUpDown retention = new NumericUpDown();
-        private long revision = -1;
-        private string lastError;
+        private readonly ProgressBar progress = new ProgressBar();
+        private readonly Button more = new Button { Text = "이전 기록 더 불러오기", AutoSize = true };
+        private readonly Button refresh = new Button { Text = "새로고침", AutoSize = true };
+        private LogPageReader reader;
+        private long revision = -1, pruneRevision = -1, characters;
+        private bool busy, initialized, reloadRequested, limited;
+        private string readError;
+        internal const int PageSize = 100;
+        internal const int MaxVisibleEntries = 10000;
+        internal const int MaxVisibleCharacters = 4 * 1024 * 1024;
         public int RetentionDays { get { return Decimal.ToInt32(retention.Value); } }
         public LogsView(LogStore logs, int days)
         {
             store = logs; Dock = DockStyle.Fill;
-            TableLayoutPanel layout = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 4 };
+            TableLayoutPanel layout = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 5 };
             layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
             layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
             layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
             layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+            layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
             layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 66));
             Controls.Add(layout);
             FlowLayoutPanel options = new FlowLayoutPanel { Dock = DockStyle.Fill, AutoSize = true, WrapContents = true };
@@ -30,17 +40,23 @@ namespace PowerShift
             retention.Minimum = 0; retention.Maximum = Int32.MaxValue; retention.Value = days; retention.Width = 85;
             options.Controls.Add(retention);
             options.Controls.Add(new Label { Text = "일  (0 = 자동 삭제 안 함 · 기본값 3일)", AutoSize = true, Margin = new Padding(3, 7, 12, 3) });
-            Button refresh = new Button { Text = "새로고침", AutoSize = true };
             refresh.Click += delegate { RefreshEntries(true); }; options.Controls.Add(refresh);
             layout.Controls.Add(options);
             info.AutoSize = true; info.ForeColor = SystemColors.GrayText; info.Margin = new Padding(3, 6, 3, 8);
-            info.Text = "전환 시 적용된 규칙과 이전 → 변경 모드를 기록합니다. 최근 500개를 표시합니다.";
+            info.Text = "전환 시 적용된 규칙과 이전 → 변경 모드를 기록합니다.";
             layout.Controls.Add(info);
             entries.Dock = DockStyle.Fill; entries.View = View.Details; entries.FullRowSelect = true;
             entries.MultiSelect = false; entries.HideSelection = false; entries.ShowItemToolTips = true;
             entries.Columns.Add("시간", 145); entries.Columns.Add("이전 모드", 90); entries.Columns.Add("변경 모드", 90);
             entries.Columns.Add("적용 규칙", 210); entries.Columns.Add("전환 이유", 230); entries.Columns.Add("전체 경로", 300);
             layout.Controls.Add(entries);
+            FlowLayoutPanel loading = new FlowLayoutPanel { Dock = DockStyle.Fill, AutoSize = true, WrapContents = true };
+            progress.Style = ProgressBarStyle.Marquee; progress.MarqueeAnimationSpeed = 30;
+            progress.AccessibleName = "로그를 불러오는 중";
+            progress.Width = 100; progress.Height = 18; progress.Margin = new Padding(3, 7, 8, 3); progress.Visible = false;
+            loading.Controls.Add(progress); loading.Controls.Add(more); layout.Controls.Add(loading);
+            more.Click += delegate { LoadPage(false); };
+            entries.NearBottom += delegate { if (Visible && !busy && reader != null && reader.HasMore && !limited) LoadPage(false); };
             details.Dock = DockStyle.Fill; details.Multiline = true; details.ReadOnly = true; details.ScrollBars = ScrollBars.Vertical;
             details.BackColor = SystemColors.Control; layout.Controls.Add(details);
             entries.SelectedIndexChanged += delegate
@@ -57,26 +73,109 @@ namespace PowerShift
         }
         public void RefreshEntries(bool force = false)
         {
-            if (!Visible || (!force && revision == store.Revision && lastError == store.LastError)) return;
-            try
+            if (!Visible) return;
+            if (force || !initialized || pruneRevision != store.PruneRevision)
             {
-                List<LogEntry> recent = store.ReadRecent(500);
-                entries.BeginUpdate();
+                if (busy) { if (force || (initialized && pruneRevision != store.PruneRevision)) reloadRequested = true; }
+                else LoadPage(true);
+            }
+            else UpdateInfo();
+        }
+        private void LoadPage(bool reset)
+        {
+            if (busy || (!reset && (reader == null || !reader.HasMore || limited))) return;
+            busy = true; readError = null; refresh.Enabled = false; more.Enabled = false;
+            progress.Visible = true; UpdateInfo();
+            long startedRevision = store.Revision, startedPrune = store.PruneRevision;
+            LogPageReader pageReader = reset ? null : reader;
+            ThreadPool.QueueUserWorkItem(delegate
+            {
+                List<LogEntry> result = null;
+                Exception error = null;
                 try
                 {
-                    entries.Items.Clear(); details.Text = "";
-                    foreach (LogEntry entry in recent)
-                        entries.Items.Add(new ListViewItem(new[] { entry.LocalTime, entry.FromPlan ?? "", entry.ToPlan ?? "",
-                            entry.Rule ?? "", entry.Reason ?? "", entry.ExecutablePath ?? "" }) { Tag = entry, ToolTipText = Describe(entry) });
+                    if (pageReader == null) pageReader = new LogPageReader(store.DirectoryPath);
+                    result = pageReader.ReadPage(PageSize);
                 }
-                finally { entries.EndUpdate(); }
-                revision = store.Revision; lastError = store.LastError;
-                info.Text = lastError == null ? "최근 " + recent.Count + "개 표시 (최대 500개). 보관 기간은 저장하면 적용됩니다."
-                    : "로그 저장/정리 실패: " + lastError;
-                if (lastError == null && store.ViewWasLimited) info.Text = "최근 " + recent.Count + "개 표시. 큰 로그는 최근 일부만 표시합니다.";
-                info.ForeColor = lastError == null ? SystemColors.GrayText : Color.Firebrick;
+                catch (Exception failure) { error = failure; }
+                try
+                {
+                    if (!IsHandleCreated || IsDisposed) return;
+                    BeginInvoke((MethodInvoker)delegate
+                    {
+                        if (IsDisposed || Disposing) return;
+                        if (reloadRequested || startedPrune != store.PruneRevision)
+                        {
+                            busy = false; progress.Visible = false; refresh.Enabled = true;
+                            reloadRequested = false; initialized = false; reader = null;
+                            if (Visible) LoadPage(true);
+                            return;
+                        }
+                        initialized = true; pruneRevision = startedPrune;
+                        if (error != null)
+                        {
+                            busy = false; progress.Visible = false; refresh.Enabled = true;
+                            readError = error.Message; reader = null; UpdateInfo(); return;
+                        }
+                        reader = pageReader;
+                        entries.BeginUpdate();
+                        try
+                        {
+                            if (reset)
+                            {
+                                entries.Items.Clear(); details.Text = ""; characters = 0; limited = false;
+                                revision = startedRevision;
+                            }
+                            foreach (LogEntry entry in result)
+                            {
+                                string description = Describe(entry);
+                                string[] columns = { entry.LocalTime ?? "", entry.FromPlan ?? "", entry.ToPlan ?? "",
+                                    entry.Rule ?? "", entry.Reason ?? "", entry.ExecutablePath ?? "" };
+                                long length = description.Length;
+                                foreach (string column in columns) length += column.Length;
+                                if (entries.Items.Count >= MaxVisibleEntries || characters + length > MaxVisibleCharacters)
+                                { limited = true; break; }
+                                characters += length;
+                                entries.Items.Add(new ListViewItem(columns) { Tag = entry, ToolTipText = description });
+                            }
+                        }
+                        finally { entries.EndUpdate(); }
+                        busy = false; progress.Visible = false; refresh.Enabled = true;
+                        UpdateInfo();
+                    });
+                }
+                // Closing settings while reading must not marshal to a destroyed handle.
+                catch (InvalidOperationException) { }
+            });
+        }
+        private void UpdateInfo()
+        {
+            more.Enabled = !busy && !limited && reader != null && reader.HasMore;
+            more.Text = busy ? "불러오는 중…" : "이전 기록 더 불러오기";
+            info.ForeColor = SystemColors.GrayText;
+            if (busy) info.Text = "로그를 불러오는 중… (" + entries.Items.Count + "개 표시)";
+            else if (readError != null || store.LastError != null)
+            {
+                info.Text = readError != null ? "로그를 읽을 수 없습니다: " + readError : "로그 저장/정리 실패: " + store.LastError;
+                info.ForeColor = Color.Firebrick;
             }
-            catch (Exception error) { info.Text = "로그를 읽을 수 없습니다: " + error.Message; info.ForeColor = Color.Firebrick; }
+            else if (limited) info.Text = entries.Items.Count + "개 표시. 화면 메모리 한도에 도달했습니다. 저장된 로그 파일은 유지됩니다.";
+            else if (revision != store.Revision) info.Text = entries.Items.Count + "개 표시. 새 로그가 있습니다. 새로고침하면 최신 기록을 표시합니다.";
+            else info.Text = entries.Items.Count + "개 표시. " + (reader != null && reader.HasMore
+                ? "아래로 스크롤하면 이전 기록을 100개씩 불러옵니다." : "마지막 기록입니다.") + " 보관 기간은 저장하면 적용됩니다.";
+        }
+        private sealed class ScrollListView : ListView
+        {
+            public event EventHandler NearBottom;
+            protected override void WndProc(ref Message message)
+            {
+                base.WndProc(ref message);
+                // Mouse wheel, scrollbar, keyboard navigation and window resize.
+                if (message.Msg != 0x20A && message.Msg != 0x115 && message.Msg != 0x101 && message.Msg != 0x5) return;
+                if (Items.Count == 0 || TopItem == null) return;
+                int rows = Math.Max(1, ClientSize.Height / Math.Max(1, Font.Height + 4));
+                if (TopItem.Index + rows + 8 >= Items.Count && NearBottom != null) NearBottom(this, EventArgs.Empty);
+            }
         }
     }
 }

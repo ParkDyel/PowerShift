@@ -35,6 +35,7 @@ namespace PowerShift
         public const int MaxViewBytes = 4 * 1024 * 1024;
         public readonly string DirectoryPath;
         public long Revision { get; private set; }
+        public long PruneRevision { get; private set; }
         public string LastError { get; private set; }
         public bool ViewWasLimited { get; private set; }
         private readonly JavaScriptSerializer serializer = new JavaScriptSerializer { MaxJsonLength = MaxLineCharacters, RecursionLimit = 16 };
@@ -63,7 +64,7 @@ namespace PowerShift
             }
             catch (Exception error) { LastError = error.Message; return false; }
         }
-        private List<string> Files()
+        internal List<string> Files()
         {
             List<string> result = new List<string>();
             CheckDirectory();
@@ -162,7 +163,7 @@ namespace PowerShift
                         CheckDirectory(); SafeStorage.RejectReparsePoint(file);
                         if (kept == 0) File.Delete(file);
                         else File.Replace(temp, file, null);
-                        Revision++;
+                        Revision++; PruneRevision++;
                     }
                     finally { if (File.Exists(temp)) File.Delete(temp); }
                 }
