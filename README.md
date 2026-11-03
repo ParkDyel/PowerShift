@@ -23,6 +23,7 @@ powershell.exe -NoProfile -ExecutionPolicy RemoteSigned -File .\Setup.ps1 -Enabl
 ```
 
 소스에서 설치하면 EXE를 먼저 빌드합니다. 생성된 **PowerShift.lnk**를 실행합니다. 아이콘이 안 보이면 작업 표시줄의 숨겨진 아이콘 메뉴(`^`)를 여세요.
+설치 스크립트는 현재 사용자의 시작 메뉴에도 바로가기를 등록합니다. Windows에서 **PowerShift**를 검색해 실행할 수 있습니다. 새 항목이 표시되기까지 잠시 걸릴 수 있습니다.
 아이콘을 클릭하면 모드와 설정 메뉴가 열립니다. 이미 실행 중일 때 바로가기를 다시 열면 설정 화면이 표시됩니다.
 트레이 아이콘 색상은 **절전: 노랑 / 균형 조정: 초록 / 고성능: 파랑**입니다. 사용자 구성표는 초록으로 표시합니다.
 
@@ -73,7 +74,7 @@ Windows 설정의 별도 **전원 모드**와 제어판의 **전원 관리 구�
 - 자동 실행: `HKCU\Software\Microsoft\Windows\CurrentVersion\Run\PowerShift`
 
 설정 파일은 Git에 포함되지 않습니다. 설치 폴더를 이동했다면 이동한 위치에서 `Setup.ps1 -EnableStartup`을 다시 실행하세요.
-제거하려면 설정에서 자동 실행을 해제하고 정상 종료한 뒤 앱 폴더를 삭제합니다. 필요하면 설정 폴더도 삭제할 수 있습니다.
+제거하려면 설정에서 자동 실행을 해제하고 정상 종료한 뒤 앱 폴더와 `%APPDATA%\Microsoft\Windows\Start Menu\Programs\PowerShift.lnk` 바로가기를 삭제합니다. 필요하면 설정 폴더도 삭제할 수 있습니다.
 
 ## 개발 및 검증
 

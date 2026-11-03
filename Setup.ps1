@@ -7,19 +7,25 @@ if (!$ScriptHost -and !(Test-Path -LiteralPath $exePath)) {
     & (Join-Path $PSScriptRoot 'Build.ps1') | Out-Null
 }
 $shell = New-Object -ComObject WScript.Shell
-$shortcut = $shell.CreateShortcut((Join-Path $PSScriptRoot 'PowerShift.lnk'))
-if ($ScriptHost) {
-    $shortcut.TargetPath = $hostPath
-    $shortcut.Arguments = '-NoProfile -STA -WindowStyle Hidden -ExecutionPolicy RemoteSigned -File "' + $scriptPath + '" -Settings'
-} else {
-    $shortcut.TargetPath = $exePath
-    $shortcut.Arguments = '--settings'
+$programsPath = [Environment]::GetFolderPath('Programs')
+if ([String]::IsNullOrWhiteSpace($programsPath)) { throw 'Current-user Start menu folder is unavailable.' }
+New-Item -ItemType Directory -Path $programsPath -Force | Out-Null
+$shortcutPaths = @((Join-Path $PSScriptRoot 'PowerShift.lnk'), (Join-Path $programsPath 'PowerShift.lnk'))
+foreach ($shortcutPath in $shortcutPaths) {
+    $shortcut = $shell.CreateShortcut($shortcutPath)
+    if ($ScriptHost) {
+        $shortcut.TargetPath = $hostPath
+        $shortcut.Arguments = '-NoProfile -STA -WindowStyle Hidden -ExecutionPolicy RemoteSigned -File "' + $scriptPath + '" -Settings'
+    } else {
+        $shortcut.TargetPath = $exePath
+        $shortcut.Arguments = '--settings'
+    }
+    $shortcut.WorkingDirectory = $PSScriptRoot
+    $shortcut.WindowStyle = 1
+    $shortcut.Description = 'PowerShift - Windows power plan switcher'
+    $shortcut.IconLocation = (Join-Path $env:WINDIR 'System32\powercpl.dll') + ',0'
+    $shortcut.Save()
 }
-$shortcut.WorkingDirectory = $PSScriptRoot
-$shortcut.WindowStyle = 1
-$shortcut.Description = 'PowerShift - Windows power plan switcher'
-$shortcut.IconLocation = (Join-Path $env:WINDIR 'System32\powercpl.dll') + ',0'
-$shortcut.Save()
 if ($EnableStartup) {
     if ($ScriptHost) {
         $registration = Start-Process -FilePath $hostPath -ArgumentList @('-NoProfile','-STA','-WindowStyle','Hidden','-ExecutionPolicy','RemoteSigned','-File',('"' + $scriptPath + '"'),'-EnableStartup') -WindowStyle Hidden -PassThru -Wait
@@ -28,4 +34,5 @@ if ($EnableStartup) {
     }
     if ($registration.ExitCode -ne 0) { throw 'Startup registration failed.' }
 }
-Write-Output 'Created PowerShift.lnk. Launch it to open PowerShift.'
+Write-Output 'Created PowerShift shortcuts in the app folder and current-user Start menu.'
+Write-Output 'Search for PowerShift in Windows to open it. New entries may take a moment to appear.'

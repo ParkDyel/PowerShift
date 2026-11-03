@@ -1,5 +1,5 @@
 using System.Reflection;
 [assembly: AssemblyTitle("PowerShift")]
 [assembly: AssemblyDescription("Windows tray power plan switcher with per-process profiles")]
-[assembly: AssemblyVersion("0.3.1.0")]
-[assembly: AssemblyFileVersion("0.3.1.0")]
+[assembly: AssemblyVersion("0.3.2.0")]
+[assembly: AssemblyFileVersion("0.3.2.0")]
