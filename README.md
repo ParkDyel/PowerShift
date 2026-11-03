@@ -1,0 +1,82 @@
+# PowerShift
+
+Windows 전원 관리 구성표를 트레이에서 전환하는 작은 유틸리티입니다.
+자동차의 ECO / NORMAL / SPORT 주행 모드처럼, PC의 절전 / 균형 조정 / 고성능을 바꿉니다.
+
+- 트레이에서 **기본값 변경**: 직접 고른 구성표를 기본값으로 저장
+- **프로그램별 설정**: 지정한 프로세스가 실행 중일 때 원하는 구성표 적용
+- 프로그램이 종료되면 기본값으로 복귀
+- 여러 규칙이 동시에 맞으면 목록 위쪽 규칙을 우선 적용
+- 자동 전환 일시 중지, 로그인 시 자동 실행, 중복 실행 방지
+- 외부 패키지, 웹뷰, 네트워크 통신, 관리자 권한 불필요
+- 약 32KB의 C# / WinForms 실행 파일 (Windows 기본 .NET Framework 사용)
+
+## 실행
+
+Windows 10/11, Windows PowerShell 5.1, .NET Framework 4.x를 사용합니다.
+
+저장소를 내려받은 폴더에서 아래 명령으로 바로가기를 만들고 자동 실행을 등록합니다.
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy RemoteSigned -File .\Setup.ps1 -EnableStartup
+```
+
+소스에서 설치하면 EXE를 먼저 빌드합니다. 생성된 **PowerShift.lnk**를 실행합니다. 아이콘이 안 보이면 작업 표시줄의 숨겨진 아이콘 메뉴(`^`)를 여세요.
+아이콘을 클릭하면 모드와 설정 메뉴가 열립니다. 이미 실행 중일 때 바로가기를 다시 열면 설정 화면이 표시됩니다.
+
+PowerShell 실행 정책은 해당 프로세스에만 지정하며 사용자/시스템 기본 정책을 바꾸지 않습니다.
+인터넷에서 받은 파일이 `RemoteSigned` 정책으로 차단된다면 소스를 검토한 뒤 Windows의 파일 속성에서 내려받은 파일의 차단 상태를 확인하세요.
+조직에서 관리하는 실행 제한 정책은 그대로 적용됩니다.
+
+## 기본값과 프로그램별 설정
+
+1. **설정 → 기본 설정**에서 평소 사용할 전원 구성표를 고릅니다.
+2. **프로그램별 설정 → 추가**에서 실행 파일을 고르거나 실행 중인 프로세스 이름을 선택합니다.
+3. 실행 중 적용할 전원 구성표를 선택하고 저장합니다.
+
+예: 기본값 **절전**, `game.exe` 실행 중에는 **고성능**, 종료 후에는 **절전**.
+
+규칙은 실행 파일 **이름**을 기준으로 대소문자 구분 없이 일치시킵니다. 같은 이름의 모든 프로세스와 백그라운드 실행도 포함합니다.
+창이 활성화되어 있는지는 판단하지 않습니다. 프로세스가 실제로 종료되어야 복귀합니다.
+자동 전환은 2초 간격으로 확인합니다. 활성 규칙이 없으면 기본값을 유지합니다.
+규칙 적용 중 트레이에서 기본값을 바꾸면, 규칙 종료 후 새 기본값으로 돌아갑니다.
+자동 전환을 끄거나 앱을 정상 종료하면 기본값으로 복원합니다. 강제 종료/프로세스 충돌 시에는 복원을 보장하지 않습니다.
+
+Windows에 등록된 구성표를 사용하며 사용자 구성표도 선택할 수 있습니다. 구성표를 새로 만들거나 세부 전원 값을 수정하지 않습니다.
+Windows 설정의 별도 **전원 모드**와 제어판의 **전원 관리 구성표**는 서로 다른 기능입니다. PowerShift는 구성표를 전환합니다.
+삭제된 구성표를 가리키는 규칙은 건너뜁니다. 기본 구성표가 삭제되면 현재 구성표를 유지하므로 설정에서 새 기본값을 선택하세요.
+
+## 저장 위치와 제거
+
+- 설정: `%APPDATA%\PowerShift\settings.json` (기본값, 규칙, 우선순위)
+- 자동 실행: `HKCU\Software\Microsoft\Windows\CurrentVersion\Run\PowerShift`
+
+설정 파일은 Git에 포함되지 않습니다. 설치 폴더를 이동했다면 이동한 위치에서 `Setup.ps1 -EnableStartup`을 다시 실행하세요.
+제거하려면 설정에서 자동 실행을 해제하고 정상 종료한 뒤 앱 폴더를 삭제합니다. 필요하면 설정 폴더도 삭제할 수 있습니다.
+
+## 개발 및 검증
+
+```powershell
+# EXE 빌드 (추가 SDK나 NuGet 패키지 불필요)
+powershell.exe -NoProfile -ExecutionPolicy RemoteSigned -File .\Build.ps1
+
+# 규칙 우선순위, 복귀, 저장/유효성 검사
+powershell.exe -NoProfile -ExecutionPolicy RemoteSigned -File .\Test.ps1
+
+# 실제 전원 구성표 전환 및 로컬 테스트 프로세스 시작/종료 검증
+# 끝나면 원래 활성 구성표를 복원합니다.
+powershell.exe -NoProfile -ExecutionPolicy RemoteSigned -File .\Test.ps1 -Integration
+
+# 실제 트레이 EXE의 감지 주기, 여러 인스턴스, 복귀 및 정상 종료 검증
+# 앱을 종료한 상태에서 실행하며 기존 설정과 활성 구성표를 복원합니다.
+powershell.exe -NoProfile -ExecutionPolicy RemoteSigned -File .\tests\SmokeTest.ps1
+```
+
+`bin\PowerShift.exe`가 기본 실행 방식입니다. PowerShell 호스트가 상주하지 않습니다.
+서명되지 않은 EXE의 실행이 차단되는 환경에서는 `Setup.ps1 -ScriptHost`로 같은 C# 소스를 Windows PowerShell에서 실행하는 바로가기를 만들 수 있습니다.
+PowerShell 방식은 실행 시 소스를 컴파일하며 EXE 방식보다 호스트 메모리를 더 사용합니다. 조직의 애플리케이션 제어 정책은 우선 적용됩니다.
+
+개발 중 실행한 앱은 `bin\PowerShift.exe --exit`로 정상 종료할 수 있습니다.
+
+Windows 공식 API: [PowerEnumerate](https://learn.microsoft.com/en-us/windows/win32/api/powrprof/nf-powrprof-powerenumerate),
+[PowerSetActiveScheme](https://learn.microsoft.com/en-us/windows/win32/api/powersetting/nf-powersetting-powersetactivescheme).

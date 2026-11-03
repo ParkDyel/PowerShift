@@ -1,0 +1,6 @@
+bin/
+*.lnk
+*.log
+*.tmp
+settings.json
+TestResults/
