@@ -73,7 +73,12 @@ namespace PowerShift
         }
         public static void OpenPowerOptions()
         {
-            try { Process.Start(new ProcessStartInfo("control.exe", "/name Microsoft.PowerOptions") { UseShellExecute = true }); }
+            try
+            {
+                string control = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "control.exe");
+                Process.Start(new ProcessStartInfo(control, "/name Microsoft.PowerOptions")
+                    { UseShellExecute = false, WorkingDirectory = Environment.GetFolderPath(Environment.SpecialFolder.System) });
+            }
             catch (Exception error) { Error("전원 옵션을 열 수 없습니다.", error); }
         }
     }

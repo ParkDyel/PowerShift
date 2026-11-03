@@ -53,6 +53,7 @@ namespace PowerShift
                 Assert(RuleEngine.Normalize(@"C:\Games\game.exe") == "game" && RuleEngine.Normalize("foo.bar.exe") == "foo.bar", "path and dotted executable normalization");
                 PathRules();
                 LogTests();
+                SecurityResourceTests();
                 string folder = Path.Combine(Path.GetTempPath(), "PowerShiftTests-" + Guid.NewGuid().ToString("N"));
                 try
                 {
@@ -149,6 +150,10 @@ namespace PowerShift
             settings.Rules.Add(new ProcessRule { ProcessName = "game", ExecutablePath = @"C:\Apps\A\game.exe", PlanId = Performance.ToString() });
             settings.Rules.Add(new ProcessRule { ProcessName = "game", ExecutablePath = @"C:\Apps\B\game.exe", PlanId = Balanced.ToString() });
             SettingsStore.Validate(settings);
+            Assert(RuleEngine.ResolveProcesses(settings, new[] {
+                new RunningProcess { ProcessName = "game", ExecutablePath = @"C:\Apps\C\game.exe" },
+                new RunningProcess { ProcessName = "helper", ExecutablePath = @"C:\Apps\A\game.exe" }
+                }, available, Saver).PlanId == Saver, "name and full path must match the same process record");
             Assert(RuleEngine.ResolveProcesses(settings, new[] { new RunningProcess { ProcessName = "game", ExecutablePath = @"c:/apps/a/./GAME.EXE" } },
                 available, Saver).PlanId == Performance, "full path matches with case and separator normalization");
             Assert(RuleEngine.ResolveProcesses(settings, new[] { new RunningProcess { ProcessName = "game", ExecutablePath = @"C:\Apps\B\game.exe" } },
@@ -170,6 +175,79 @@ namespace PowerShift
             bool relativeRejected = false;
             try { RuleEngine.NormalizePath(@"Apps\game.exe"); } catch (InvalidDataException) { relativeRejected = true; }
             Assert(relativeRejected, "relative executable paths are rejected");
+        }
+        private static void SecurityResourceTests()
+        {
+            string folder = Path.Combine(Path.GetTempPath(), "PowerShiftSecurityTests-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(folder);
+            try
+            {
+                string settingsFile = Path.Combine(folder, "settings.json");
+                File.WriteAllText(settingsFile, new string(' ', SettingsStore.MaxSettingsBytes + 1));
+                bool oversizedSettingsRejected = false;
+                try { new SettingsStore(settingsFile).Load(Saver); } catch (InvalidDataException) { oversizedSettingsRejected = true; }
+                Assert(oversizedSettingsRejected && new FileInfo(settingsFile).Length == SettingsStore.MaxSettingsBytes + 1,
+                    "oversized settings rejected before deserialization without rewriting original");
+                string logFile = Path.Combine(folder, "PowerShift-2026-11-03.jsonl");
+                string filler = "{\"TimestampUtc\":\"2026-10-30T00:00:00Z\",\"Reason\":\"" + new string('x', 512) + "\"}";
+                using (StreamWriter writer = new StreamWriter(logFile, false, new System.Text.UTF8Encoding(false)))
+                {
+                    for (int i = 0; i < 10000; i++) writer.WriteLine(filler);
+                    writer.WriteLine("{\"TimestampUtc\":\"2026-11-03T00:00:00Z\",\"Reason\":\"newest\"}");
+                }
+                LogStore logs = new LogStore(folder);
+                long originalSize = new FileInfo(logFile).Length;
+                Assert(originalSize > LogStore.MaxViewBytes && logs.ReadRecent(500)[0].Reason == "newest" && logs.ViewWasLimited,
+                    "large log view reads a bounded tail and retains newest entry");
+                Assert(new FileInfo(logFile).Length == originalSize, "bounded log display never truncates stored history");
+                Assert(logs.Prune(3, new DateTimeOffset(2026, 11, 3, 12, 0, 0, TimeSpan.Zero)) && logs.ReadRecent(10).Count == 1,
+                    "streaming retention prunes large logs without buffering all retained lines");
+                string oversizedLine = filler + Environment.NewLine + new string('x', LogStore.MaxLineCharacters + 1);
+                File.WriteAllText(logFile, oversizedLine);
+                bool oversizedLineRejected = false;
+                try { logs.ReadRecent(10); } catch (InvalidDataException) { oversizedLineRejected = true; }
+                Assert(oversizedLineRejected, "oversized log line rejected by bounded reader");
+                Assert(!logs.Prune(3, new DateTimeOffset(2026, 11, 3, 12, 0, 0, TimeSpan.Zero)) && File.ReadAllText(logFile) == oversizedLine,
+                    "failed pruning preserves entire original log");
+                Assert(Directory.GetFiles(folder, "*.tmp").Length == 0, "failed pruning cleans only its temporary output");
+                Assert(!logs.Append(new LogEntry { Reason = new string('x', LogStore.MaxLineCharacters + 1) }) && File.ReadAllText(logFile) == oversizedLine,
+                    "oversized audit entry cannot append an unbounded record");
+            }
+            finally
+            { foreach (string file in Directory.GetFiles(folder)) File.Delete(file); Directory.Delete(folder); }
+        }
+        public static int RunRedirectChecks(string root)
+        {
+            try
+            {
+                string outside = Path.Combine(root, "outside");
+                LogStore original = new LogStore(outside);
+                original.Append(new LogEntry { TimestampUtc = "2026-10-01T00:00:00Z", Reason = "must remain" });
+                string originalLog = Path.Combine(outside, "PowerShift-2026-10-01.jsonl");
+                string originalLogText = File.ReadAllText(originalLog);
+                LogStore redirected = new LogStore(Path.Combine(root, "log-link"));
+                Assert(!redirected.Prune(3, DateTimeOffset.UtcNow) && File.ReadAllText(originalLog) == originalLogText,
+                    "junction log root cannot delete outside records");
+                Assert(!redirected.Append(new LogEntry { Reason = "must not write" }) && Directory.GetFiles(outside).Length == 1,
+                    "junction log root cannot append outside records");
+                bool readRejected = false;
+                try { redirected.ReadRecent(10); } catch (IOException) { readRejected = true; }
+                Assert(readRejected, "junction log root cannot read outside history");
+                string outsideSettings = Path.Combine(outside, "settings.json");
+                File.WriteAllText(outsideSettings, "must remain");
+                SettingsStore redirectedSettings = new SettingsStore(Path.Combine(root, "data-link", "settings.json"));
+                bool saveRejected = false;
+                try { redirectedSettings.Save(Sample()); } catch (IOException) { saveRejected = true; }
+                Assert(saveRejected && File.ReadAllText(outsideSettings) == "must remain", "junction settings root cannot overwrite outside file");
+                bool loadRejected = false;
+                try { redirectedSettings.Load(Saver); } catch (IOException) { loadRejected = true; }
+                Assert(loadRejected, "junction settings root cannot load outside configuration");
+                LogStore redirectedParent = new LogStore(Path.Combine(root, "data-link", "logs"));
+                Assert(!redirectedParent.Append(new LogEntry { Reason = "must not write" }) && !Directory.Exists(Path.Combine(outside, "logs")),
+                    "junction app-data parent cannot redirect log writes");
+                return 0;
+            }
+            catch (Exception error) { Console.WriteLine(error); return 1; }
         }
         private static void Integration()
         {

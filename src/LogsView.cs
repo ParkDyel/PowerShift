@@ -73,6 +73,7 @@ namespace PowerShift
                 revision = store.Revision; lastError = store.LastError;
                 info.Text = lastError == null ? "최근 " + recent.Count + "개 표시 (최대 500개). 보관 기간은 저장하면 적용됩니다."
                     : "로그 저장/정리 실패: " + lastError;
+                if (lastError == null && store.ViewWasLimited) info.Text = "최근 " + recent.Count + "개 표시. 큰 로그는 최근 일부만 표시합니다.";
                 info.ForeColor = lastError == null ? SystemColors.GrayText : Color.Firebrick;
             }
             catch (Exception error) { info.Text = "로그를 읽을 수 없습니다: " + error.Message; info.ForeColor = Color.Firebrick; }

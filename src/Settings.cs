@@ -42,9 +42,10 @@ namespace PowerShift
 
     public sealed class SettingsStore
     {
+        public const int MaxSettingsBytes = 1024 * 1024;
         public readonly string FilePath;
-        private readonly JavaScriptSerializer serializer = new JavaScriptSerializer();
-        public SettingsStore(string filePath) { FilePath = filePath; }
+        private readonly JavaScriptSerializer serializer = new JavaScriptSerializer { MaxJsonLength = MaxSettingsBytes, RecursionLimit = 16 };
+        public SettingsStore(string filePath) { FilePath = Path.GetFullPath(filePath); }
         public static string DefaultPath
         {
             get { return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
@@ -52,25 +53,20 @@ namespace PowerShift
         }
         public AppSettings Load(Guid initialPlan)
         {
+            SafeStorage.RejectReparsePoint(Path.GetDirectoryName(FilePath));
+            SafeStorage.RejectReparsePoint(FilePath);
             if (!File.Exists(FilePath))
                 return new AppSettings { DefaultPlanId = initialPlan.ToString() };
-            AppSettings settings = serializer.Deserialize<AppSettings>(File.ReadAllText(FilePath));
+            AppSettings settings = serializer.Deserialize<AppSettings>(SafeStorage.ReadText(FilePath, MaxSettingsBytes));
             Validate(settings);
             return settings;
         }
         public void Save(AppSettings settings)
         {
             Validate(settings);
-            string directory = Path.GetDirectoryName(FilePath);
-            Directory.CreateDirectory(directory);
-            string temp = FilePath + "." + Guid.NewGuid().ToString("N") + ".tmp";
-            try
-            {
-                File.WriteAllText(temp, serializer.Serialize(settings), new UTF8Encoding(false));
-                if (File.Exists(FilePath)) File.Replace(temp, FilePath, null);
-                else File.Move(temp, FilePath);
-            }
-            finally { if (File.Exists(temp)) File.Delete(temp); }
+            string json = serializer.Serialize(settings);
+            if (Encoding.UTF8.GetByteCount(json) > MaxSettingsBytes) throw new InvalidDataException("설정 파일이 허용 크기(1 MiB)를 초과했습니다.");
+            SafeStorage.WriteText(FilePath, json);
         }
         public static void Validate(AppSettings settings)
         {
@@ -149,7 +145,8 @@ namespace PowerShift
                 foreach (RunningProcess process in running)
                 {
                     processes.Add(Normalize(process.ProcessName));
-                    if (!String.IsNullOrWhiteSpace(process.ExecutablePath)) paths.Add(NormalizePath(process.ExecutablePath));
+                    if (!String.IsNullOrWhiteSpace(process.ExecutablePath))
+                        paths.Add(Normalize(process.ProcessName) + "|" + NormalizePath(process.ExecutablePath));
                 }
                 int priority = 0;
                 foreach (ProcessRule rule in settings.Rules)
@@ -157,7 +154,7 @@ namespace PowerShift
                     priority++;
                     Guid id;
                     if (rule.Enabled && processes.Contains(Normalize(rule.ProcessName)) &&
-                        (String.IsNullOrWhiteSpace(rule.ExecutablePath) || paths.Contains(NormalizePath(rule.ExecutablePath))) &&
+                        (String.IsNullOrWhiteSpace(rule.ExecutablePath) || paths.Contains(RuleKey(rule))) &&
                         Guid.TryParse(rule.PlanId, out id) && available.Contains(id))
                         return new Decision { PlanId = id, ProcessName = Normalize(rule.ProcessName),
                             ExecutablePath = rule.ExecutablePath, RulePriority = priority };
