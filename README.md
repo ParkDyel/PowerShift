@@ -16,6 +16,22 @@ Windows 전원 관리 구성표를 트레이에서 전환하는 작은 유틸리
 
 Windows 10/11, Windows PowerShell 5.1, .NET Framework 4.x를 사용합니다.
 
+### 설치 프로그램 (권장)
+
+[최신 릴리스](https://github.com/ParkDyel/PowerShift/releases/latest)에서 **PowerShift-Setup-0.4.0.exe**를 내려받아 실행하세요.
+설치 마법사에서 폴더와 로그인 시 자동 실행 여부를 선택하면 됩니다. 별도의 PowerShell 명령을 입력할 필요가 없습니다.
+
+- 현재 사용자 계정에 설치하며 관리자 권한을 요구하지 않습니다.
+- 기본 설치 위치: `%LOCALAPPDATA%\Programs\PowerShift`
+- 시작 메뉴와 Windows 앱 검색에 **PowerShift** 등록
+- Windows **설정 → 앱 → 설치된 앱**에서 제거 가능
+- 업데이트 시 실행 중인 앱을 정상 종료하고 교체
+- 업데이트와 제거 시 기존 설정과 로그 유지
+
+설치 파일은 코드 서명되지 않았습니다. Windows의 SmartScreen 또는 조직/PC의 앱 제어 정책에 따라 실행이 제한될 수 있으며, 설치 프로그램이 이 정책을 변경하지는 않습니다.
+
+### ZIP / 소스에서 실행
+
 저장소를 내려받은 폴더에서 아래 명령으로 바로가기를 만들고 자동 실행을 등록합니다.
 
 ```powershell
@@ -74,13 +90,17 @@ Windows 설정의 별도 **전원 모드**와 제어판의 **전원 관리 구�
 - 자동 실행: `HKCU\Software\Microsoft\Windows\CurrentVersion\Run\PowerShift`
 
 설정 파일은 Git에 포함되지 않습니다. 설치 폴더를 이동했다면 이동한 위치에서 `Setup.ps1 -EnableStartup`을 다시 실행하세요.
-제거하려면 설정에서 자동 실행을 해제하고 정상 종료한 뒤 앱 폴더와 `%APPDATA%\Microsoft\Windows\Start Menu\Programs\PowerShift.lnk` 바로가기를 삭제합니다. 필요하면 설정 폴더도 삭제할 수 있습니다.
+설치 프로그램으로 설치했다면 Windows **설정 → 앱 → 설치된 앱 → PowerShift → 제거**를 사용하세요. 시작 메뉴와 해당 설치의 자동 실행 항목도 정리합니다. 설정과 로그는 남겨 둡니다.
+ZIP 방식은 설정에서 자동 실행을 해제하고 정상 종료한 뒤 앱 폴더와 `%APPDATA%\Microsoft\Windows\Start Menu\Programs\PowerShift.lnk` 바로가기를 삭제합니다. 필요하면 설정 폴더도 삭제할 수 있습니다.
 
 ## 개발 및 검증
 
 ```powershell
 # EXE 빌드 (추가 SDK나 NuGet 패키지 불필요)
 powershell.exe -NoProfile -ExecutionPolicy RemoteSigned -File .\Build.ps1
+
+# 설치 EXE 빌드: 개발 PC에 Inno Setup 7.1.1 필요
+powershell.exe -NoProfile -ExecutionPolicy RemoteSigned -File .\Build-Installer.ps1 -IsccPath "C:\Program Files\Inno Setup 7\ISCC.exe"
 
 # 규칙 우선순위, 복귀, 저장/유효성 검사
 powershell.exe -NoProfile -ExecutionPolicy RemoteSigned -File .\Test.ps1
@@ -92,6 +112,10 @@ powershell.exe -NoProfile -ExecutionPolicy RemoteSigned -File .\Test.ps1 -Integr
 # 실제 트레이 EXE의 감지 주기, 여러 인스턴스, 복귀 및 정상 종료 검증
 # 앱을 종료한 상태에서 실행하며 기존 설정과 활성 구성표를 복원합니다.
 powershell.exe -NoProfile -ExecutionPolicy RemoteSigned -File .\tests\SmokeTest.ps1
+
+# 설치·실행 중 업그레이드·제거·설정/로그 보존 검증
+# 개발/검증용 새 폴더를 지정하세요. 기존 설치가 있는 계정에서는 실행을 거부합니다.
+powershell.exe -NoProfile -ExecutionPolicy RemoteSigned -File .\tests\InstallerTest.ps1 -InstallerPath .\dist\PowerShift-Setup-0.4.0.exe -InstallDirectory "$env:TEMP\PowerShift-Installer-Test"
 ```
 
 `bin\PowerShift.exe`가 기본 실행 방식입니다. PowerShell 호스트가 상주하지 않습니다.
@@ -99,6 +123,7 @@ powershell.exe -NoProfile -ExecutionPolicy RemoteSigned -File .\tests\SmokeTest.
 PowerShell 방식은 실행 시 소스를 컴파일하며 EXE 방식보다 호스트 메모리를 더 사용합니다. 조직의 애플리케이션 제어 정책은 우선 적용됩니다.
 
 개발 중 실행한 앱은 `bin\PowerShift.exe --exit`로 정상 종료할 수 있습니다.
+GitHub Actions에서도 Windows 빌드, 규칙/로그 검사, 설치·업데이트·제거를 검증합니다.
 
 Windows 공식 API: [PowerEnumerate](https://learn.microsoft.com/en-us/windows/win32/api/powrprof/nf-powrprof-powerenumerate),
 [PowerSetActiveScheme](https://learn.microsoft.com/en-us/windows/win32/api/powersetting/nf-powersetting-powersetactivescheme).

@@ -26,6 +26,7 @@ jobs:
           $ErrorActionPreference = 'Stop'
           $package = Join-Path $env:RUNNER_TEMP 'innosetup-7.1.1-x64.exe'
           Invoke-WebRequest 'https://github.com/jrsoftware/issrc/releases/download/is-7_1_1/innosetup-7.1.1-x64.exe' -OutFile $package
+          if ((Get-FileHash -LiteralPath $package -Algorithm SHA256).Hash -ne '8A5A6711C3766A6E5FB74F280BA0E3551E719CE94538D901FDBD1F8F9920B3F0') { throw 'Compiler package checksum mismatch.' }
           $signature = Get-AuthenticodeSignature -LiteralPath $package
           if ($signature.Status -ne 'Valid' -or $signature.SignerCertificate.Subject -notmatch 'Pyrsys B.V.') { throw 'Official compiler signature invalid.' }
           $compilerRoot = Join-Path $env:RUNNER_TEMP 'InnoSetup'
