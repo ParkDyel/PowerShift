@@ -119,7 +119,9 @@ namespace PowerShift
         private readonly Label status = new Label();
         private readonly Action<AppSettings, bool> saveSettings;
         private readonly LogsView logsView;
-        public SettingsForm(AppSettings settings, List<Plan> choices, string currentStatus, Action<AppSettings, bool> save, LogStore logs)
+        private readonly ShutdownStatusView shutdownView;
+        public SettingsForm(AppSettings settings, List<Plan> choices, string currentStatus, Action<AppSettings, bool> save,
+            LogStore logs, Action<IWin32Window> scheduleShutdown, Func<IWin32Window, string> cancelShutdown)
         {
             draft = settings.Copy(); plans = choices; saveSettings = save;
             Text = "PowerShift 설정";
@@ -128,15 +130,20 @@ namespace PowerShift
             ClientSize = new Size(940, 520); MinimumSize = new Size(760, 460);
             StartPosition = FormStartPosition.CenterScreen;
             Icon = Desktop.CreateIcon(Guid.Parse(settings.DefaultPlanId));
-            TableLayoutPanel root = new TableLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(20),
-                ColumnCount = 1, RowCount = 4 };
-            root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+            TabControl sections = new TabControl { Dock = DockStyle.Fill };
+            TabPage powerTab = new TabPage("전원 관리") { Padding = new Padding(16) };
+            TabPage shutdownTab = new TabPage("예약 종료") { Padding = new Padding(16) };
+            sections.TabPages.Add(powerTab);
+            sections.TabPages.Add(shutdownTab);
+            Controls.Add(sections);
+            shutdownView = new ShutdownStatusView(scheduleShutdown, cancelShutdown);
+            shutdownTab.Controls.Add(shutdownView);
+
+            TableLayoutPanel root = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 3 };
             root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
             root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
             root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-            Controls.Add(root);
-            root.Controls.Add(new Label { Text = "PowerShift", Font = new Font(Font.FontFamily, 20, FontStyle.Bold),
-                AutoSize = true, Margin = new Padding(0, 0, 0, 4) });
+            powerTab.Controls.Add(root);
             status.Text = currentStatus; status.AutoSize = true;
             status.ForeColor = SystemColors.GrayText; status.Margin = new Padding(0, 0, 0, 16);
             root.Controls.Add(status);
@@ -187,6 +194,14 @@ namespace PowerShift
             Button apply = new Button { Text = "저장", AutoSize = true };
             footer.Controls.Add(cancel); footer.Controls.Add(apply); root.Controls.Add(footer);
             CancelButton = cancel; AcceptButton = apply;
+            cancel.Click += delegate { Close(); };
+            sections.SelectedIndexChanged += delegate
+            {
+                bool editingPower = sections.SelectedTab == powerTab;
+                AcceptButton = editingPower ? apply : null;
+                CancelButton = editingPower ? cancel : null;
+                if (!editingPower) RefreshShutdownReservation();
+            };
             apply.Click += delegate
             {
                 try
@@ -205,6 +220,7 @@ namespace PowerShift
         }
         public void UpdateStatus(string text) { status.Text = text; }
         public void RefreshLogs() { logsView.RefreshEntries(); }
+        public void RefreshShutdownReservation() { shutdownView.RefreshReservation(); }
         private static void AddButton(Control parent, string text, EventHandler click)
         {
             Button button = new Button { Text = text, AutoSize = true, MinimumSize = new Size(64, 0) };

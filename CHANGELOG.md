@@ -5,6 +5,16 @@ Git 커밋은 구현의 세부 이력, [설계 문서](docs/DESIGN.md)는 현재
 
 ## [Unreleased]
 
+### Windows 예약 종료
+
+- 트레이 메뉴 또는 **설정 → 예약 종료 → 예약 추가…**에서 분 단위로 PC 종료를 예약할 수 있습니다. Windows가 예약을 관리하므로 PowerShift를 닫아도 유지됩니다.
+- **예약 조회**에서 PowerShift로 등록한 명령과 예상 종료 시각을 확인할 수 있습니다. 명령 프롬프트나 다른 앱에서 등록한 예약 정보는 표시되지 않습니다.
+- **Windows 예약 취소…**에서 Windows에 대기 중인 종료 또는 다시 시작을 취소할 수 있습니다. 외부에서 등록한 예약도 취소할 수 있습니다.
+
+### 설정 화면
+
+- 설정을 **전원 관리**와 **예약 종료** 탭으로 구성했습니다. 전원 관리 탭에서 기존 기본 설정, 프로그램별 설정, 로그를 확인할 수 있습니다.
+
 ## [0.4.1] - 2026-11-03
 
 ### 로그 탐색
@@ -99,7 +109,8 @@ Git 커밋은 구현의 세부 이력, [설계 문서](docs/DESIGN.md)는 현재
 - 외부 패키지 없이 Windows .NET Framework로 실행. EXE 빌드와 PowerShell 호스팅 방식 제공.
 - 규칙·저장·실제 전환 검사 22개와 트레이 동작 검사 4개 통과.
 
-[Unreleased]: https://github.com/ParkDyel/PowerShift/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/ParkDyel/PowerShift/compare/v0.4.1...HEAD
+[0.4.1]: https://github.com/ParkDyel/PowerShift/releases/tag/v0.4.1
 [0.4.0]: https://github.com/ParkDyel/PowerShift/releases/tag/v0.4.0
 [0.3.2]: https://github.com/ParkDyel/PowerShift/releases/tag/v0.3.2
 [0.3.1]: https://github.com/ParkDyel/PowerShift/releases/tag/v0.3.1

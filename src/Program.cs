@@ -194,8 +194,46 @@ namespace PowerShift
             ToolStripMenuItem powerOptions = new ToolStripMenuItem("Windows 전원 옵션 열기");
             powerOptions.Click += delegate { Desktop.OpenPowerOptions(); }; menu.Items.Add(powerOptions);
             menu.Items.Add(new ToolStripSeparator());
+            menu.Items.Add(new ToolStripMenuItem("Windows 종료 예약…", null, delegate { ScheduleShutdown(null); }));
+            menu.Items.Add(new ToolStripSeparator());
             ToolStripMenuItem exit = new ToolStripMenuItem("종료");
             exit.Click += delegate { ExitThread(); }; menu.Items.Add(exit);
+        }
+        private void ScheduleShutdown(IWin32Window owner)
+        {
+            using (ShutdownForm dialog = new ShutdownForm())
+            {
+                if (owner != null) dialog.StartPosition = FormStartPosition.CenterParent;
+                if (dialog.ShowDialog(owner) != DialogResult.OK) return;
+                int minutes = dialog.DelayMinutes;
+                try
+                {
+                    WindowsShutdown.Schedule(minutes);
+                }
+                catch (Exception error) { Desktop.Error("Windows 종료를 예약할 수 없습니다.", error); return; }
+
+                DateTimeOffset due = DateTimeOffset.UtcNow.AddMinutes(minutes);
+                tray.ShowBalloonTip(5000, "PowerShift", minutes.ToString("N0") + "분 후 Windows가 종료됩니다.", ToolTipIcon.Info);
+                try { WindowsShutdown.RememberReservation(due, minutes); }
+                catch (Exception error) { Desktop.Error("Windows 종료를 예약했지만 조회용 정보를 저장할 수 없습니다.", error); }
+                if (settingsForm != null && !settingsForm.IsDisposed) settingsForm.RefreshShutdownReservation();
+            }
+        }
+        private string CancelShutdown(IWin32Window owner)
+        {
+            if (MessageBox.Show(owner, "Windows에서 대기 중인 종료 또는 다시 시작을 취소할까요?",
+                "Windows 종료 예약 취소", MessageBoxButtons.YesNo, MessageBoxIcon.Question,
+                MessageBoxDefaultButton.Button2) != DialogResult.Yes) return null;
+
+            bool cancelled;
+            try { cancelled = WindowsShutdown.Cancel(); }
+            catch (Exception error) { Desktop.Error("Windows 종료 예약을 취소할 수 없습니다.", error); return null; }
+
+            string result = cancelled ? "Windows 종료 또는 다시 시작 예약을 취소했습니다."
+                : "취소할 Windows 종료 또는 다시 시작 예약이 없습니다.";
+            try { WindowsShutdown.ForgetReservation(); }
+            catch (Exception error) { Desktop.Error(result + " 조회용 정보를 지울 수 없습니다.", error); }
+            return result;
         }
         private void CommitSettings(AppSettings next, bool startup)
         {
@@ -224,7 +262,7 @@ namespace PowerShift
             try
             {
                 ReloadPlans();
-                settingsForm = new SettingsForm(settings, plans, status, CommitSettings, logs);
+                settingsForm = new SettingsForm(settings, plans, status, CommitSettings, logs, ScheduleShutdown, CancelShutdown);
                 settingsForm.FormClosed += delegate { SettingsForm old = settingsForm; settingsForm = null; old.Dispose(); };
                 settingsForm.Show();
             }
